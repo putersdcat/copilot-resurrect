@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.4.1] - 2026-03-24
+
+### Fixed
+- **`workbench.action.chat.focus` command not found**: Replaced with `workbench.action.chat.open` (which is known to work) for focusing the chat panel in both retry-in-place and ignition-prompt paths.
+- **Sub-agent activity not detected by heartbeat**: Added workspace-level activity listeners (`onDidChangeTextDocument`, `onDidSaveTextDocument`). When a sub-agent edits workspace files or runs terminal commands, those document changes now reset the silence timer, preventing false resurrection triggers during active sub-agent sessions.
+
 ## [1.4.0] - 2026-03-17
 
 ### Changed
@@ -42,14 +48,3 @@
 - Initial MVP release of **Copilot Resurrect**.
 - `SessionWatcher`: Monitors Copilot Chat session files for silence using `vscode.FileSystemWatcher` + heartbeat polling.
 - `ResurrectionEngine`: Clipboard-paste-based prompt injection + `workbench.action.chat.submit`.
-- Daily restart counter persisted via `ExtensionContext.globalState` with automatic midnight reset.
-- Status bar item showing watcher state and daily restart count.
-- Full set of commands: Enable, Disable, Toggle, Test Resurrection (dry-run), Show Status, Reset Counter, Show Log, Configure Prompt.
-- Settings schema: `enabled`, `ignitionPrompt`, `silenceTimeoutSeconds`, `maxRestartsPerDay`, `modelHint`, `watchPaths`.
-- Dynamic path discovery for Copilot Chat session files (workspaceStorage + globalStorage + OS fallbacks).
-- Dedicated Output Channel "Copilot Resurrection Watcher" for all telemetry.
-
-[1.4.0]: https://github.com/putersdcat/copilot-resurrect/compare/v1.3.0...v1.4.0
-[1.3.0]: https://github.com/putersdcat/copilot-resurrect/compare/v1.2.0...v1.3.0
-[1.2.0]: https://github.com/putersdcat/copilot-resurrect/compare/v1.0.0...v1.2.0
-[1.0.0]: https://github.com/putersdcat/copilot-resurrect/releases/tag/v1.0.0
