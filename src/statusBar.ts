@@ -35,7 +35,12 @@ export class ResurrectStatusBar implements vscode.Disposable {
   }
 
   setResurrecting(): void {
-    this._item.text = `$(loading~spin) Resurrecting…`;
+    this._item.text = `$(loading~spin) Resurrecting\u2026`;
+    this._item.show();
+  }
+
+  setCooldown(secondsRemaining: number): void {
+    this._item.text = `$(watch) Rate-limited \u2014 cooldown ${secondsRemaining}s`;
     this._item.show();
   }
 

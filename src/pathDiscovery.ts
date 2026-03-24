@@ -5,8 +5,7 @@
  *  1. Use context.storageUri to anchor into the workspaceStorage directory.
  *  2. Enumerate all peer extension folders looking for "github.copilot-chat".
  *  3. Look for a "chatSessions" sub-folder inside that.
- *  4. Fall back to watching all *.json under the copilot-chat workspace storage root
- *     (still catches session writes without requiring ChatSessions to exist yet).
+ *  4. Fall back to watching all *.json under the copilot-chat workspace storage root.
  *  5. Also watch a broader User/globalStorage/github.copilot-chat path.
  */
 import * as vscode from 'vscode';
@@ -22,12 +21,10 @@ export function discoverWatchDirs(context: vscode.ExtensionContext): string[] {
   try {
     const myStoragePath = context.storageUri?.fsPath;
     if (myStoragePath) {
-      // e.g. …/workspaceStorage/<hash>/EricAnderson.copilot-resurrect
-      const wsHashDir = p.dirname(myStoragePath);          // the <hash> folder
+      const wsHashDir = p.dirname(myStoragePath);
 
       Logger.debug(`workspaceStorage hash dir: ${wsHashDir}`);
 
-      // Look for github.copilot-chat under the same workspace hash
       const copilotChatWsPath = p.join(wsHashDir, 'github.copilot-chat');
       if (fs.existsSync(copilotChatWsPath)) {
         const chatSessionsPath = p.join(copilotChatWsPath, 'chatSessions');
@@ -39,7 +36,6 @@ export function discoverWatchDirs(context: vscode.ExtensionContext): string[] {
           Logger.info(`Watch target (copilot-chat ws storage): ${copilotChatWsPath}`);
         }
       } else {
-        // Broad sweep of the workspace hash folder – catches Copilot when it first creates files
         dirs.push(wsHashDir);
         Logger.info(`Watch target (ws hash broad sweep): ${wsHashDir}`);
       }
@@ -48,7 +44,7 @@ export function discoverWatchDirs(context: vscode.ExtensionContext): string[] {
     Logger.warn(`workspaceStorage discovery failed: ${err}`);
   }
 
-  // ── 2. globalStorage path  ───────────────────────────────────────────────
+  // ── 2. globalStorage path  ─────────────────────────────────────────────
   try {
     const globalStoragePath = context.globalStorageUri?.fsPath;
     if (globalStoragePath) {
@@ -63,7 +59,7 @@ export function discoverWatchDirs(context: vscode.ExtensionContext): string[] {
     Logger.warn(`globalStorage discovery failed: ${err}`);
   }
 
-  // ── 3. Hard-coded fallback paths (Windows + macOS + Linux)  ─────────────
+  // ── 3. Hard-coded fallback paths (Windows + macOS + Linux)  ─────────
   const fallbackCandidates = buildFallbackPaths();
   for (const candidate of fallbackCandidates) {
     if (fs.existsSync(candidate) && !dirs.includes(candidate)) {

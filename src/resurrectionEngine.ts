@@ -1,32 +1,55 @@
 import * as vscode from 'vscode';
 import { Logger } from './logger';
 import { ResurrectConfig, buildFullPrompt } from './config';
+import { resetScanCache } from './errorDetector';
 
 /** Key used to save daily restart records in globalState. */
 const DAILY_STATE_KEY = 'copilot-resurrect.dailyRestarts';
+/** Key for tracking consecutive rate-limit failures for exponential backoff. */
+const CONSECUTIVE_RL_KEY = 'copilot-resurrect.consecutiveRateLimits';
 
 interface DailyState {
   date: string; // YYYY-MM-DD
   count: number;
 }
 
+export type ResurrectionTrigger = 'silence' | 'rate_limit' | 'server_error' | 'content_filtered' | 'unknown_error' | 'manual';
+
 /**
  * ResurrectionEngine handles:
  *  - Rate-limiting via the daily restart counter (persisted in globalState).
- *  - The actual resurrection sequence: focus → inject prompt → submit.
+ *  - Exponential backoff cooldown when rate-limit errors are detected.
+ *  - The actual resurrection sequence using VS Code chat commands (no clipboard).
  */
 export class ResurrectionEngine {
   private _context: vscode.ExtensionContext;
   private _isResurrecting = false;
+  private _cooldownTimer: ReturnType<typeof setTimeout> | undefined;
+  private _onCooldownTick: ((secondsRemaining: number) => void) | undefined;
+  private _consecutiveRateLimits = 0;
 
   constructor(context: vscode.ExtensionContext) {
     this._context = context;
+    this._consecutiveRateLimits = context.globalState.get<number>(CONSECUTIVE_RL_KEY, 0);
+  }
+
+  get isResurrecting(): boolean {
+    return this._isResurrecting;
+  }
+
+  get isCoolingDown(): boolean {
+    return this._cooldownTimer !== undefined;
   }
 
   /** How many automatic resurrections have been triggered today. */
   get todayCount(): number {
     const state = this._getDailyState();
     return state.count;
+  }
+
+  /** Register a callback for cooldown tick updates (for status bar). */
+  set onCooldownTick(cb: ((secondsRemaining: number) => void) | undefined) {
+    this._onCooldownTick = cb;
   }
 
   /** Reset the daily counter (exposed as a command). */
@@ -36,14 +59,44 @@ export class ResurrectionEngine {
     Logger.info('Daily restart counter reset to 0.');
   }
 
+  /** Reset the exponential backoff counter (e.g., after successful session). */
+  resetBackoff(): void {
+    this._consecutiveRateLimits = 0;
+    this._context.globalState.update(CONSECUTIVE_RL_KEY, 0);
+    Logger.info('Exponential backoff counter reset.');
+  }
+
+  /**
+   * Calculate the current cooldown duration using exponential backoff.
+   * Formula: min(base * 2^consecutive, max)
+   */
+  calculateCooldown(config: ResurrectConfig): number {
+    const base = config.rateLimitCooldownBaseSeconds;
+    const max = config.rateLimitCooldownMaxSeconds;
+    const cooldown = Math.min(base * Math.pow(2, this._consecutiveRateLimits), max);
+    return Math.round(cooldown);
+  }
+
   /**
    * Attempt to resurrect the Copilot Chat session.
    * Returns true on success, false if blocked (rate-limit, no prompt, etc.)
-   * @param dryRun If true, logs all steps but does NOT execute clipboard/submit commands.
+   *
+   * @param config Current extension configuration.
+   * @param dryRun If true, logs all steps but does NOT execute commands.
+   * @param trigger What caused the resurrection (silence, rate_limit, etc.)
    */
-  async resurrect(config: ResurrectConfig, dryRun = false): Promise<boolean> {
+  async resurrect(
+    config: ResurrectConfig,
+    dryRun = false,
+    trigger: ResurrectionTrigger = 'manual',
+  ): Promise<boolean> {
     if (this._isResurrecting) {
       Logger.warn('Resurrection already in progress. Skipping duplicate trigger.');
+      return false;
+    }
+
+    if (this._cooldownTimer) {
+      Logger.warn('Cooldown in progress. Skipping resurrection trigger.');
       return false;
     }
 
@@ -61,7 +114,7 @@ export class ResurrectionEngine {
       return false;
     }
 
-    // ── Daily rate-limit check ─────────────────────────────────────────────
+    // ── Daily rate-limit check ─────────────────────────────────────────────────
     const state = this._getDailyState();
     if (state.count >= config.maxRestartsPerDay) {
       Logger.warn(
@@ -80,77 +133,135 @@ export class ResurrectionEngine {
       return false;
     }
 
+    // ── Exponential backoff cooldown for rate-limit triggers ───────────────
+    if (trigger === 'rate_limit' && !dryRun) {
+      this._consecutiveRateLimits++;
+      this._context.globalState.update(CONSECUTIVE_RL_KEY, this._consecutiveRateLimits);
+
+      const cooldownSeconds = this.calculateCooldown(config);
+      Logger.info(
+        `Rate-limit detected (consecutive: ${this._consecutiveRateLimits}). ` +
+        `Exponential backoff: waiting ${cooldownSeconds}s before resurrection\u2026`
+      );
+      vscode.window.showInformationMessage(
+        `Copilot Resurrect: Rate-limited. Backoff cooldown: ${cooldownSeconds}s ` +
+        `(attempt ${this._consecutiveRateLimits})`
+      );
+      await this._cooldown(cooldownSeconds);
+      Logger.info('Cooldown complete. Proceeding with resurrection.');
+    }
+
     this._isResurrecting = true;
     Logger.separator();
-    Logger.info(`Resurrection attempt #${state.count + 1} (today). DryRun: ${dryRun}`);
-    Logger.info(`Prompt: ${fullPrompt.substring(0, 120)}${fullPrompt.length > 120 ? '…' : ''}`);
+    Logger.info(
+      `Resurrection attempt #${state.count + 1} (today). ` +
+      `Trigger: ${trigger}. DryRun: ${dryRun}. ` +
+      `Model: ${config.preferredModel || '(default)'}. ` +
+      `Participant: ${config.chatParticipant || '(none)'}. ` +
+      `AgentMode: ${config.agentMode || '(default)'}. ` +
+      `Approvals: ${config.approvalsMode}. ` +
+      `NewSession: ${config.startNewSession}`
+    );
+    Logger.info(`Prompt: ${fullPrompt.substring(0, 120)}${fullPrompt.length > 120 ? '\u2026' : ''}`);
 
     try {
       if (dryRun) {
-        Logger.info('[DRY RUN] Would execute: workbench.action.chat.focus');
-        await sleep(300);
-        Logger.info('[DRY RUN] Would write prompt to clipboard');
-        await sleep(300);
-        Logger.info('[DRY RUN] Would execute: editor.action.clipboardPasteAction');
-        await sleep(300);
+        Logger.info('[DRY RUN] Would execute: workbench.action.chat.newChat (if startNewSession)');
+        await sleep(200);
+        if (config.agentMode) {
+          Logger.info(`[DRY RUN] Would switch agent mode to: ${config.agentMode}`);
+          await sleep(200);
+        }
+        Logger.info(`[DRY RUN] Would execute: workbench.action.chat.open with query (${fullPrompt.length} chars)`);
+        await sleep(200);
         Logger.info('[DRY RUN] Would execute: workbench.action.chat.submit');
         Logger.info('[DRY RUN] Resurrection simulation complete.');
         return true;
       }
 
-      // ── Step 1: Save clipboard  ──────────────────────────────────────────
-      const previousClipboard = await vscode.env.clipboard.readText();
-      Logger.debug('Clipboard saved.');
+      // ── Step 1: Optionally start new chat session  ──────────────────────
+      if (config.startNewSession || trigger === 'rate_limit') {
+        Logger.info('Starting new chat session\u2026');
+        await vscode.commands.executeCommand('workbench.action.chat.newChat');
+        await sleep(600);
 
-      // ── Step 2: Focus Copilot Chat  ──────────────────────────────────────
-      Logger.info('Focusing Copilot Chat panel…');
-      await vscode.commands.executeCommand('workbench.action.chat.focus');
-      await sleep(500);
+        // Switch to configured agent mode
+        if (config.agentMode) {
+          Logger.info(`Switching to agent mode: ${config.agentMode}\u2026`);
+          try {
+            await vscode.commands.executeCommand(
+              'workbench.action.chat.switchChatMode',
+              config.agentMode
+            );
+            await sleep(400);
+          } catch (err) {
+            Logger.warn(`Could not switch chat mode to "${config.agentMode}": ${err}`);
+          }
+        }
 
-      // ── Step 3: Write prompt to clipboard  ──────────────────────────────
-      await vscode.env.clipboard.writeText(fullPrompt);
-      Logger.debug('Prompt written to clipboard.');
-      await sleep(200);
+        // Approvals mode reminder for new sessions
+        if (config.approvalsMode !== 'default') {
+          const modeLabel = config.approvalsMode === 'bypass'
+            ? 'Bypass Approvals'
+            : 'Autopilot (Preview)';
+          Logger.info(`Approvals mode preference: ${modeLabel}. User may need to confirm in the chat UI.`);
+          vscode.window.showInformationMessage(
+            `Copilot Resurrect: New session started. Set approvals to "${modeLabel}" in the chat dropdown if needed.`,
+            'Dismiss'
+          );
+        }
+      } else {
+        // ── Focus existing chat  ──────────────────────────────────────────────────
+        Logger.info('Focusing existing Copilot Chat panel\u2026');
+        await vscode.commands.executeCommand('workbench.action.chat.focus');
+        await sleep(400);
+      }
 
-      // ── Step 4: Paste into the chat input  ──────────────────────────────
-      Logger.info('Pasting prompt into chat input…');
-      await vscode.commands.executeCommand('editor.action.clipboardPasteAction');
+      // ── Step 2: Inject prompt via chat open command (no clipboard)  ──────
+      Logger.info('Injecting prompt via workbench.action.chat.open\u2026');
+      await vscode.commands.executeCommand('workbench.action.chat.open', {
+        query: fullPrompt,
+        isPartialQuery: true,
+      });
       await sleep(400);
 
-      // ── Step 5: Submit  ─────────────────────────────────────────────────
-      Logger.info('Submitting prompt…');
+      // ── Step 3: Submit  ─────────────────────────────────────────────────────
+      Logger.info('Submitting prompt\u2026');
       await vscode.commands.executeCommand('workbench.action.chat.submit');
       await sleep(300);
 
-      // ── Step 6: Restore clipboard  ──────────────────────────────────────
-      await vscode.env.clipboard.writeText(previousClipboard);
-      Logger.debug('Clipboard restored.');
+      // ── Reset error detection cache so new session gets a fresh baseline ─
+      resetScanCache();
+
+      // ── Reset backoff on successful non-rate-limit triggers  ────────────
+      if (trigger !== 'rate_limit') {
+        this.resetBackoff();
+      }
 
       // ── Increment counter  ───────────────────────────────────────────────
       this._incrementDailyState();
       Logger.info(`Resurrection complete. Today's count: ${this.todayCount}/${config.maxRestartsPerDay}.`);
 
       vscode.window.showInformationMessage(
-        `Copilot Resurrect: Session restarted (${this.todayCount}/${config.maxRestartsPerDay} today).`
+        `Copilot Resurrect: Session restarted [${trigger}] (${this.todayCount}/${config.maxRestartsPerDay} today).`
       );
 
       return true;
     } catch (err) {
       Logger.error('Resurrection failed', err);
-      vscode.window.showErrorMessage(`Copilot Resurrect: Resurrection failed — ${err}`);
+      vscode.window.showErrorMessage(`Copilot Resurrect: Resurrection failed \u2014 ${err}`);
       return false;
     } finally {
       this._isResurrecting = false;
     }
   }
 
-  // ── Private helpers ────────────────────────────────────────────────────────
+  // ── Private helpers ───────────────────────────────────────────────────────────────
 
   private _getDailyState(): DailyState {
     const stored = this._context.globalState.get<DailyState>(DAILY_STATE_KEY);
     const today = todayString();
     if (!stored || stored.date !== today) {
-      // New day – auto-reset
       const fresh: DailyState = { date: today, count: 0 };
       this._context.globalState.update(DAILY_STATE_KEY, fresh);
       return fresh;
@@ -162,6 +273,24 @@ export class ResurrectionEngine {
     const state = this._getDailyState();
     const updated: DailyState = { date: state.date, count: state.count + 1 };
     this._context.globalState.update(DAILY_STATE_KEY, updated);
+  }
+
+  /** Wait for the specified cooldown period, ticking every second. */
+  private _cooldown(seconds: number): Promise<void> {
+    return new Promise(resolve => {
+      let remaining = seconds;
+      this._cooldownTimer = setInterval(() => {
+        remaining--;
+        this._onCooldownTick?.(remaining);
+        if (remaining <= 0) {
+          if (this._cooldownTimer) {
+            clearInterval(this._cooldownTimer);
+            this._cooldownTimer = undefined;
+          }
+          resolve();
+        }
+      }, 1000);
+    });
   }
 }
 

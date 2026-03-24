@@ -2,7 +2,7 @@
 
 > **Keep your autonomous GitHub Copilot Chat loops alive — overnight, unattended, indefinitely.**
 
-[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/putersdcat/copilot-resurrect)
+[![Version](https://img.shields.io/badge/version-1.3.0-blue.svg)](https://github.com/putersdcat/copilot-resurrect)
 [![VS Code](https://img.shields.io/badge/VS%20Code-%5E1.85.0-007ACC.svg)](https://code.visualstudio.com/)
 
 ---
@@ -18,14 +18,15 @@ GitHub Copilot Chat is uniquely powerful for running autonomous coding agents us
 
 These workflows routinely run **5–18+ hours** unattended — when they stay alive. But Copilot Chat sessions terminate unpredictably due to:
 
-- Server-side throttling or malformed-prompt aborts
+- Server-side throttling or rate-limit errors
 - Token-limit / context-window overflows on session rollover
 - Transient network / data-centre failovers (TCP reset)
 - Model-router errors that bypass the built-in retry mechanism
+- Content-filtered responses that silently kill the session
 
 When termination happens, the chat panel simply **stops**. No restart. No alert. Hours of autonomous work lost.
 
-**Copilot Resurrect solves this.** It watches for silence, detects a dead session, and automatically re-injects your ignition prompt to start a fresh session — all while you sleep.
+**Copilot Resurrect solves this.** It watches for silence and content-based error patterns, detects a dead session, and automatically re-injects your ignition prompt to start a fresh session — all while you sleep.
 
 ---
 
@@ -33,16 +34,20 @@ When termination happens, the chat panel simply **stops**. No restart. No alert.
 
 | Feature | Detail |
 |---|---|
-| 🔍 **Silence Detection** | Monitors Copilot Chat session storage via `FileSystemWatcher`; falls back to a polling heartbeat |
-| 🔄 **Auto Resurrection** | Focuses Copilot Chat, pastes your ignition prompt, and submits — no human required |
-| ⏱️ **Configurable Timeout** | 60–600 second silence window before declaring a session dead (default: 180 s) |
+| 🔍 **Dual Detection** | Silence-based (`FileSystemWatcher` + polling heartbeat) and content-based error scanning of session files |
+| 🔄 **Auto Resurrection** | Opens Copilot Chat, injects your ignition prompt via the VS Code chat API, and submits — no clipboard, no human required |
+| ⏱️ **Configurable Timeout** | 60–600 second silence window before declaring a session dead (default: 180s) |
+| 📈 **Exponential Backoff** | Rate-limit cooldowns double on each consecutive failure (base × 2^n, capped) instead of fixed delays |
 | 🛡️ **Daily Rate Cap** | Configurable max restarts per calendar day (default: 50) to prevent infinite storms |
-| 💾 **Persistent Counter** | Restart count persists across VS Code restarts via `globalState` |
-| 📋 **Clipboard-Safe** | Saves and restores your clipboard before/after prompt injection |
-| 📝 **Model Hint Prefix** | Optional model hint (e.g. `@gpt-4o`) prepended to the ignition prompt |
+| 💾 **Persistent State** | Restart counter and backoff state persist across VS Code restarts via `globalState` |
+| 🤖 **Agent Mode Picker** | Discovers custom agents from `.github/agents/*.agent.md` in your workspace + built-in modes (agent/edit/ask) |
+| 🎯 **Model Picker** | Enumerates available Copilot models via `vscode.lm.selectChatModels()` for preferred + fallback selection |
+| 💬 **Participant Prefix** | Optionally prefix the ignition prompt with `@workspace`, `@copilot`, `@vscode`, or `@terminal` |
+| ✅ **Approvals Mode** | Choose Default / Bypass / Autopilot approvals for resurrected sessions |
+| 🆕 **New Session Control** | Start fresh sessions on resurrection, or retry in the existing panel |
 | 📊 **Output Log** | Full timestamped log in the **Copilot Resurrection Watcher** Output Channel |
-| 🟢 **Status Bar Item** | Live status indicator in the bottom-right of the VS Code window |
-| 🧪 **Dry Run Test** | Test the full resurrection sequence without actually submitting anything |
+| 🟢 **Status Bar Item** | Live status indicator with cooldown countdown |
+| 🧪 **Dry Run Test** | Test the full resurrection sequence without actually submitting |
 
 ---
 
@@ -53,7 +58,7 @@ When termination happens, the chat panel simply **stops**. No restart. No alert.
 Install the `.vsix` directly:
 
 ```
-code --install-extension copilot-resurrect-1.0.0.vsix
+code --install-extension copilot-resurrect-1.3.0.vsix
 ```
 
 Or install from the Extensions Marketplace (when published).
@@ -66,13 +71,17 @@ Open the Command Palette (`Ctrl+Shift+P`) and run:
 Copilot Resurrect: Configure Ignition Prompt
 ```
 
-Enter the prompt you want Copilot to receive every time a session is resurrected. Example:
+Enter the prompt you want Copilot to receive every time a session is resurrected.
+
+### 3. Select Agent Mode (optional)
 
 ```
-You are an autonomous coding agent. Pull the next open issue from the GitHub backlog, implement the required changes, write tests, commit with a descriptive message, push, close the issue, then loop to the next one. Continue until all issues are resolved.
+Copilot Resurrect: Select Agent Mode
 ```
 
-### 3. Enable the Watcher
+Pick from built-in modes (agent, edit, ask) or your custom workspace agents (e.g. BasicBitch, AzureAgent, DevLoop). The extension auto-discovers `.github/agents/*.agent.md` files.
+
+### 4. Enable the Watcher
 
 ```
 Copilot Resurrect: Enable Watcher
@@ -80,7 +89,7 @@ Copilot Resurrect: Enable Watcher
 
 The status bar will show `$(debug-restart) Resurrect ON`. You're live.
 
-### 4. Walk Away
+### 5. Walk Away
 
 Open your Copilot Chat panel, queue your ignition prompt manually, and let it run. Copilot Resurrect will keep it alive in the background.
 
@@ -92,12 +101,22 @@ All settings are available under **Settings → Extensions → Copilot Resurrect
 
 | Setting | Type | Default | Description |
 |---|---|---|---|
-| `copilot-resurrect.enabled` | `boolean` | `false` | Enable/disable the watcher |
-| `copilot-resurrect.ignitionPrompt` | `string` | `""` | The prompt injected on resurrection |
-| `copilot-resurrect.silenceTimeoutSeconds` | `number` | `180` | Seconds of silence before resurrection triggers (60–600) |
-| `copilot-resurrect.maxRestartsPerDay` | `number` | `50` | Maximum auto-restarts per calendar day (1–200) |
-| `copilot-resurrect.modelHint` | `string` | `""` | Optional prefix prepended to the prompt (e.g. `@gpt-4o`) |
-| `copilot-resurrect.watchPaths` | `string[]` | `[]` | Override auto-discovered watch paths (advanced / rarely needed) |
+| `enabled` | `boolean` | `false` | Enable/disable the watcher |
+| `ignitionPrompt` | `string` | `""` | The prompt injected on resurrection |
+| `silenceTimeoutSeconds` | `number` | `180` | Seconds of silence before resurrection triggers (60–600) |
+| `maxRestartsPerDay` | `number` | `50` | Maximum auto-restarts per calendar day (1–200) |
+| `preferredModel` | `string` | `""` | Preferred Copilot model (select via command) |
+| `fallbackModel` | `string` | `""` | Fallback model after rate-limit (select via command) |
+| `chatParticipant` | `string` | `""` | Chat participant prefix (`copilot`, `workspace`, `vscode`, `terminal`) |
+| `agentMode` | `string` | `""` | Agent mode for resurrected sessions (select via command) |
+| `approvalsMode` | `string` | `"default"` | Approvals mode: `default`, `bypass`, `autopilot` |
+| `rateLimitCooldownBaseSeconds` | `number` | `30` | Base cooldown for exponential backoff (5–300) |
+| `rateLimitCooldownMaxSeconds` | `number` | `600` | Max cooldown cap for backoff (60–3600) |
+| `startNewSession` | `boolean` | `true` | Start new chat session on resurrection |
+| `contentCheckEnabled` | `boolean` | `true` | Enable content-based error detection in session files |
+| `watchPaths` | `string[]` | `[]` | Override auto-discovered watch paths (advanced) |
+
+All settings are prefixed with `copilot-resurrect.` in `settings.json`.
 
 ### Example `settings.json` entry
 
@@ -106,7 +125,9 @@ All settings are available under **Settings → Extensions → Copilot Resurrect
 "copilot-resurrect.ignitionPrompt": "Pull the next open GitHub Issue, implement it, test it, commit it, close the issue, then loop.",
 "copilot-resurrect.silenceTimeoutSeconds": 240,
 "copilot-resurrect.maxRestartsPerDay": 40,
-"copilot-resurrect.modelHint": ""
+"copilot-resurrect.agentMode": "BasicBitch",
+"copilot-resurrect.approvalsMode": "bypass",
+"copilot-resurrect.startNewSession": true
 ```
 
 ---
@@ -117,14 +138,20 @@ All commands are available via the Command Palette (`Ctrl+Shift+P`):
 
 | Command | Description |
 |---|---|
-| `Copilot Resurrect: Enable Watcher` | Start monitoring for silence |
-| `Copilot Resurrect: Disable Watcher` | Stop monitoring |
-| `Copilot Resurrect: Toggle Watcher` | Toggle enabled/disabled |
-| `Copilot Resurrect: Show Status` | Print current state to log + info toast |
-| `Copilot Resurrect: Test Resurrection (dry run)` | Walk through the resurrection sequence without submitting |
-| `Copilot Resurrect: Configure Ignition Prompt` | Set/update the ignition prompt via input box |
-| `Copilot Resurrect: Reset Daily Restart Counter` | Reset today's restart count back to zero |
-| `Copilot Resurrect: Show Output Log` | Open the **Copilot Resurrection Watcher** Output Channel |
+| **Enable Watcher** | Start monitoring for silence / errors |
+| **Disable Watcher** | Stop monitoring |
+| **Toggle Watcher** | Toggle enabled/disabled |
+| **Show Status** | Print current state to log + info toast |
+| **Test Resurrection (dry run)** | Walk through the sequence without submitting |
+| **Configure Ignition Prompt** | Set/update the ignition prompt via input box |
+| **Select Preferred Model** | Pick from available Copilot language models |
+| **Select Fallback Model** | Pick a fallback model for rate-limit scenarios |
+| **Select Chat Participant** | Choose a chat participant prefix |
+| **Select Agent Mode** | Pick from built-in + workspace custom agents |
+| **Select Approvals Mode** | Choose Default / Bypass / Autopilot |
+| **Reset Daily Restart Counter** | Reset today's count to zero |
+| **Reset Exponential Backoff** | Clear the consecutive rate-limit counter |
+| **Show Output Log** | Open the Copilot Resurrection Watcher Output Channel |
 
 ---
 
@@ -138,6 +165,10 @@ SessionWatcher
   ├─ FileSystemWatcher → github.copilot-chat/chatSessions/*.json
   │     onDidChange / onDidCreate / onDidDelete → bump last-activity timestamp
   │
+  ├─ Content-based error scanner (tail 4KB of session files)
+  │     Detects: rate_limit, server_error, content_filtered patterns
+  │     Triggers immediate resurrection with appropriate backoff
+  │
   └─ 15-second polling heartbeat
         if (now - lastActivity) >= silenceTimeoutSeconds → trigger resurrection
 ```
@@ -148,20 +179,35 @@ Path discovery is automatic and prioritised in this order:
 3. `globalStorage/github.copilot-chat/`
 4. Hard-coded platform fallbacks (`%APPDATA%\Code\User\globalStorage\...`)
 
-Custom paths can be set via `copilot-resurrect.watchPaths` to bypass discovery entirely.
-
 ### Resurrection Sequence
 
 ```
-1. Save current clipboard contents
-2. Execute: workbench.action.chat.focus
-3. Write ignition prompt (+ modelHint prefix) to clipboard
-4. Execute: editor.action.clipboardPasteAction  ← injects into chat input
-5. Execute: workbench.action.chat.submit         ← fires the prompt
-6. Restore clipboard
-7. Increment daily counter  (persisted via globalState)
-8. Reset silence timer
+1. Calculate cooldown (exponential backoff if rate-limited)
+2. Wait for cooldown with status bar countdown
+3. Open new chat session (if startNewSession enabled)
+4. Switch to configured agent mode (e.g. BasicBitch)
+5. Show approvals mode reminder (if non-default)
+6. Inject ignition prompt via workbench.action.chat.open
+7. Submit via workbench.action.chat.submit
+8. Reset error detection cache
+9. Increment daily counter (persisted via globalState)
+10. Reset silence timer
 ```
+
+### Exponential Backoff
+
+Rate-limit errors trigger progressively longer cooldowns:
+
+```
+Attempt 1:  30s  (base)
+Attempt 2:  60s  (30 × 2¹)
+Attempt 3: 120s  (30 × 2²)
+Attempt 4: 240s  (30 × 2³)
+Attempt 5: 480s  (30 × 2⁴)
+Attempt 6: 600s  (capped at max)
+```
+
+Non-rate-limit resurrections reset the backoff counter.
 
 ### Rate Limiting
 
@@ -169,6 +215,23 @@ Custom paths can be set via `copilot-resurrect.watchPaths` to bypass discovery e
 - The counter auto-resets at midnight (UTC).
 - When the cap is reached, a warning toast appears with a **Reset Counter** action.
 - An in-flight resurrection blocks concurrent triggers.
+
+---
+
+## Agent Mode Discovery
+
+The extension scans your workspace for `.github/agents/*.agent.md` files and parses their YAML frontmatter `description` field. Combined with built-in modes (`agent`, `edit`, `ask`), this gives you a curated QuickPick of all available modes.
+
+Example workspace agents discovered:
+
+```
+├── .github/agents/
+│   ├── BasicBitch.agent.md    → General-purpose task executor
+│   ├── AzureAgent.agent.md    → Azure infrastructure executor
+│   └── DevLoop.agent.md       → Self-improvement agent
+```
+
+The selected agent mode is activated via `workbench.action.chat.switchChatMode` after creating a new chat session.
 
 ---
 
@@ -181,6 +244,7 @@ The bottom-right status bar shows live state:
 | `$(debug-restart) Resurrect ON (3/50)` | Watcher active; 3 restarts used today out of 50 cap |
 | `$(debug-pause) Resurrect OFF` | Watcher disabled |
 | `$(loading~spin) Resurrecting…` | Resurrection sequence in progress |
+| `$(watch) Cooldown 45s` | Exponential backoff countdown in progress |
 
 Click the status bar item to toggle the watcher on/off.
 
@@ -190,23 +254,28 @@ Click the status bar item to toggle the watcher on/off.
 
 ### The watcher starts but never resurrects
 
-- Verify your `ignitionPrompt` is set (non-empty). Open **Configure Ignition Prompt**.
-- Run **Show Status** and check `Seconds since last activity`. If it never reaches the timeout, the FileSystemWatcher is detecting activity — which is correct behaviour (session is still alive).
-- If Copilot Chat writes session files to an unusual path, set `copilot-resurrect.watchPaths` manually and point it at the correct folder.
+- Verify your `ignitionPrompt` is set (non-empty). Run **Configure Ignition Prompt**.
+- Run **Show Status** and check `Seconds since last activity`. If it never reaches the timeout, the watcher is detecting activity — the session is still alive.
+- If Copilot Chat writes session files to an unusual path, set `watchPaths` manually.
 
-### My prompt is not appearing in the chat input
+### The prompt is not appearing in the chat input
 
-- The clipboard-paste injection requires the Copilot Chat input box to be focused. Ensure no modal dialogs are blocking the VS Code window.
-- Try increasing `silenceTimeoutSeconds` slightly — if the paste fires while Copilot is mid-response the focus may not land on the input.
+- The chat API injection requires no modal dialogs blocking VS Code.
+- Try increasing `silenceTimeoutSeconds` slightly — if resurrection fires while Copilot is mid-response, the focus may not land correctly.
 
 ### Daily counter looks wrong
 
 - Run **Reset Daily Restart Counter** to zero it out.
 - The counter is per-machine, stored in `globalState`. It resets automatically at midnight UTC.
 
+### Rate-limit back-off feels too aggressive
+
+- Adjust `rateLimitCooldownBaseSeconds` (default: 30) and `rateLimitCooldownMaxSeconds` (default: 600).
+- Run **Reset Exponential Backoff** to clear the consecutive counter immediately.
+
 ### Verbose debugging
 
-Open **Copilot Resurrect: Show Output Log** and look for `[DEBUG]` lines. The log includes every file-system event, every heartbeat tick, and every step of the resurrection sequence.
+Open **Show Output Log** and look for `[DEBUG]` lines. The log includes every file-system event, every heartbeat tick, content scan results, and every step of the resurrection sequence.
 
 ---
 
@@ -215,16 +284,20 @@ Open **Copilot Resurrect: Show Output Log** and look for `[DEBUG]` lines. The lo
 ```
 copilot-resurrect/
 ├── src/
-│   ├── extension.ts          ← Activate/deactivate, command registration, config change listener
-│   ├── config.ts             ← Settings schema types, getConfig(), buildFullPrompt()
-│   ├── sessionWatcher.ts     ← FileSystemWatcher + polling heartbeat
-│   ├── resurrectionEngine.ts ← Resurrection sequence + rate-limiting + daily counter
+│   ├── extension.ts          ← Activate/deactivate, command registration, pickers
+│   ├── config.ts             ← Settings schema, getConfig(), buildFullPrompt(), agent discovery
+│   ├── sessionWatcher.ts     ← FileSystemWatcher + polling heartbeat + content scan trigger
+│   ├── resurrectionEngine.ts ← Resurrection sequence, exponential backoff, daily counter
+│   ├── errorDetector.ts      ← Content-based error pattern matching (rate_limit, server_error, etc.)
 │   ├── pathDiscovery.ts      ← Dynamic Copilot Chat storage path discovery
 │   ├── logger.ts             ← Timestamped Output Channel wrapper
-│   └── statusBar.ts          ← Status bar item lifecycle
+│   └── statusBar.ts          ← Status bar item lifecycle + cooldown display
 ├── out/                      ← Compiled JavaScript (generated)
+├── ICON-200x200.png          ← Extension icon
 ├── package.json              ← Extension manifest, settings schema, command contributions
-└── tsconfig.json             ← TypeScript config
+├── tsconfig.json             ← TypeScript config
+├── CHANGELOG.md              ← Version history
+└── LICENSE                   ← MIT License
 ```
 
 ---
@@ -234,32 +307,24 @@ copilot-resurrect/
 ```powershell
 cd copilot-resurrect
 npm install
-npm run compile          # tsc -p ./
-npx vsce package         # produces copilot-resurrect-x.x.x.vsix
+npm run compile               # tsc -p ./
+npm run package               # produces copilot-resurrect-x.x.x.vsix
 ```
 
 **Install locally:**
 
 ```powershell
-code --install-extension copilot-resurrect-1.0.0.vsix --force
+code --install-extension copilot-resurrect-1.3.0.vsix --force
 ```
 
 ---
 
-## Limitations & Roadmap
-
-### Current Limitations (MVP)
+## Limitations
 
 - Does **not** detect VS Code crashes that take down the entire IDE process.
 - Single-workspace only (does not bridge remote SSH/WSL sessions).
-- No content-awareness — cannot distinguish "thinking for 5 minutes" from "dead". Tune `silenceTimeoutSeconds` to account for your model's typical latency.
-
-### Phase 2 Ideas
-
-- **Light content check** — inspect last N bytes of the most recently modified session file to detect error markers without full JSON parsing.
-- **Notification integration** — push a desktop notification / Teams/Slack webhook when a resurrection fires.
-- **Multi-workspace support** — per-workspace watcher instances.
-- **Session analytics** — export daily restart log as CSV.
+- Agent mode switching uses `workbench.action.chat.switchChatMode` — if VS Code changes this internal command, mode selection may silently fail (resurrection still works, just in default mode).
+- Model selection is informational — the actual model must be set in the Copilot Chat UI dropdown. The picker helps you track your preference.
 
 ---
 

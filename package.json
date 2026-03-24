@@ -1,13 +1,14 @@
 {
   "name": "copilot-resurrect",
   "displayName": "Copilot Resurrect",
-  "description": "Automatically resurrects a dead GitHub Copilot Chat session by re-injecting your configured ignition prompt — keep autonomous coding loops alive overnight.",
-  "version": "1.0.0",
+  "description": "Automatically resurrects a dead GitHub Copilot Chat session by re-injecting your configured ignition prompt \u2014 keep autonomous coding loops alive overnight.",
+  "version": "1.3.0",
   "publisher": "EricAnderson",
   "repository": {
     "type": "git",
-    "url": "https://github.com/EricAnderson/copilot-resurrect"
+    "url": "https://github.com/putersdcat/copilot-resurrect"
   },
+  "icon": "ICON-200x200.png",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -21,7 +22,8 @@
     "resurrect",
     "watchdog",
     "autonomous",
-    "agent"
+    "agent",
+    "rate-limit"
   ],
   "activationEvents": [
     "onStartupFinished"
@@ -40,14 +42,14 @@
           "type": "string",
           "default": "",
           "editPresentation": "multilineText",
-          "description": "The prompt to inject when resurrecting a dead Copilot Chat session. This should be your autonomous loop ignition prompt (e.g. 'Pull open backlog items from GitHub Issues, implement and commit them, then loop.')."
+          "description": "The prompt to inject when resurrecting a dead Copilot Chat session. This should be your autonomous loop ignition prompt."
         },
         "copilot-resurrect.silenceTimeoutSeconds": {
           "type": "number",
           "default": 180,
           "minimum": 60,
           "maximum": 600,
-          "description": "How many seconds of silence before declaring the Copilot Chat session dead and triggering resurrection. Default: 180s (3 minutes). Increase if your model takes very long to respond."
+          "description": "How many seconds of silence before declaring the Copilot Chat session dead and triggering resurrection. Default: 180s (3 minutes)."
         },
         "copilot-resurrect.maxRestartsPerDay": {
           "type": "number",
@@ -56,10 +58,60 @@
           "maximum": 200,
           "description": "Maximum number of automatic session resurrections allowed per calendar day. Prevents infinite-loop storms. Default: 50."
         },
-        "copilot-resurrect.modelHint": {
+        "copilot-resurrect.preferredModel": {
           "type": "string",
           "default": "",
-          "description": "Optional model hint prepended to the ignition prompt (e.g. '@gpt-4o'). Leave blank to use whatever model Copilot Chat selects by default."
+          "description": "Preferred Copilot Chat model (informational \u2014 select via command 'Select Preferred Model'). The model must be set in the Copilot Chat UI dropdown."
+        },
+        "copilot-resurrect.fallbackModel": {
+          "type": "string",
+          "default": "",
+          "description": "Fallback model to suggest when the primary is rate-limited (informational \u2014 select via command 'Select Fallback Model')."
+        },
+        "copilot-resurrect.chatParticipant": {
+          "type": "string",
+          "default": "",
+          "description": "Chat participant to prefix the ignition prompt with (e.g. 'copilot', 'workspace'). Leave blank for no prefix. Select via command 'Select Chat Participant'."
+        },
+        "copilot-resurrect.agentMode": {
+          "type": "string",
+          "default": "",
+          "description": "Agent mode to activate when resurrecting a session. Discovers custom agents from .github/agents/*.agent.md in the workspace. Select via command 'Select Agent Mode'."
+        },
+        "copilot-resurrect.approvalsMode": {
+          "type": "string",
+          "default": "default",
+          "enum": ["default", "bypass", "autopilot"],
+          "enumDescriptions": [
+            "Default Approvals \u2014 standard safety checks",
+            "Bypass Approvals \u2014 skip confirmation prompts (requires manual enable in new sessions)",
+            "Autopilot (Preview) \u2014 full autonomous mode (requires manual enable in new sessions)"
+          ],
+          "description": "Preferred approvals mode for resurrected sessions. Non-default modes will show a reminder to set this in the Copilot Chat UI when starting new sessions."
+        },
+        "copilot-resurrect.rateLimitCooldownBaseSeconds": {
+          "type": "number",
+          "default": 30,
+          "minimum": 5,
+          "maximum": 300,
+          "description": "Base cooldown seconds for rate-limit backoff. Each consecutive rate-limit doubles this (exponential backoff). Default: 30s."
+        },
+        "copilot-resurrect.rateLimitCooldownMaxSeconds": {
+          "type": "number",
+          "default": 600,
+          "minimum": 60,
+          "maximum": 3600,
+          "description": "Maximum cooldown seconds for exponential backoff cap. Default: 600s (10 minutes)."
+        },
+        "copilot-resurrect.startNewSession": {
+          "type": "boolean",
+          "default": true,
+          "description": "Start a new chat session when resurrecting (vs. retrying in the existing session). Rate-limit triggers always start a new session regardless of this setting."
+        },
+        "copilot-resurrect.contentCheckEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable content-based error detection. Reads Copilot Chat session files to detect rate-limit and server error messages. If disabled, only silence-based detection is used."
         },
         "copilot-resurrect.watchPaths": {
           "type": "array",
@@ -103,6 +155,11 @@
         "category": "Copilot Resurrect"
       },
       {
+        "command": "copilot-resurrect.resetBackoff",
+        "title": "Copilot Resurrect: Reset Exponential Backoff",
+        "category": "Copilot Resurrect"
+      },
+      {
         "command": "copilot-resurrect.showLog",
         "title": "Copilot Resurrect: Show Output Log",
         "category": "Copilot Resurrect"
@@ -111,42 +168,49 @@
         "command": "copilot-resurrect.configurePrompt",
         "title": "Copilot Resurrect: Configure Ignition Prompt",
         "category": "Copilot Resurrect"
+      },
+      {
+        "command": "copilot-resurrect.selectModel",
+        "title": "Copilot Resurrect: Select Preferred Model",
+        "category": "Copilot Resurrect"
+      },
+      {
+        "command": "copilot-resurrect.selectFallbackModel",
+        "title": "Copilot Resurrect: Select Fallback Model",
+        "category": "Copilot Resurrect"
+      },
+      {
+        "command": "copilot-resurrect.selectParticipant",
+        "title": "Copilot Resurrect: Select Chat Participant",
+        "category": "Copilot Resurrect"
+      },
+      {
+        "command": "copilot-resurrect.selectAgentMode",
+        "title": "Copilot Resurrect: Select Agent Mode",
+        "category": "Copilot Resurrect"
+      },
+      {
+        "command": "copilot-resurrect.selectApprovalsMode",
+        "title": "Copilot Resurrect: Select Approvals Mode",
+        "category": "Copilot Resurrect"
       }
     ],
     "menus": {
       "commandPalette": [
-        {
-          "command": "copilot-resurrect.enable",
-          "when": "true"
-        },
-        {
-          "command": "copilot-resurrect.disable",
-          "when": "true"
-        },
-        {
-          "command": "copilot-resurrect.toggle",
-          "when": "true"
-        },
-        {
-          "command": "copilot-resurrect.testResurrection",
-          "when": "true"
-        },
-        {
-          "command": "copilot-resurrect.status",
-          "when": "true"
-        },
-        {
-          "command": "copilot-resurrect.resetDailyCounter",
-          "when": "true"
-        },
-        {
-          "command": "copilot-resurrect.showLog",
-          "when": "true"
-        },
-        {
-          "command": "copilot-resurrect.configurePrompt",
-          "when": "true"
-        }
+        { "command": "copilot-resurrect.enable", "when": "true" },
+        { "command": "copilot-resurrect.disable", "when": "true" },
+        { "command": "copilot-resurrect.toggle", "when": "true" },
+        { "command": "copilot-resurrect.testResurrection", "when": "true" },
+        { "command": "copilot-resurrect.status", "when": "true" },
+        { "command": "copilot-resurrect.resetDailyCounter", "when": "true" },
+        { "command": "copilot-resurrect.resetBackoff", "when": "true" },
+        { "command": "copilot-resurrect.showLog", "when": "true" },
+        { "command": "copilot-resurrect.configurePrompt", "when": "true" },
+        { "command": "copilot-resurrect.selectModel", "when": "true" },
+        { "command": "copilot-resurrect.selectFallbackModel", "when": "true" },
+        { "command": "copilot-resurrect.selectParticipant", "when": "true" },
+        { "command": "copilot-resurrect.selectAgentMode", "when": "true" },
+        { "command": "copilot-resurrect.selectApprovalsMode", "when": "true" }
       ]
     }
   },

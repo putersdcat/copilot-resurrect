@@ -2,21 +2,24 @@ import * as vscode from 'vscode';
 import { Logger } from './logger';
 import { ResurrectConfig } from './config';
 import { discoverWatchDirs } from './pathDiscovery';
-import * as p from 'path';
+import { checkFileForErrors, DetectedError } from './errorDetector';
 
 export type SilenceCallback = () => void;
+export type ErrorCallback = (error: DetectedError) => void;
 
 /**
  * SessionWatcher monitors Copilot Chat session files for activity.
- * When no file-system activity is detected for longer than
- * config.silenceTimeoutSeconds, it fires the onSilenceDetected callback.
+ * Dual detection modes:
+ *  1. Silence detection — no filesystem changes for N seconds → presumed dead
+ *  2. Content-based error detection — reads session files for error patterns
+ *     (rate-limit, server errors) even when the filesystem shows activity
  */
 export class SessionWatcher implements vscode.Disposable {
   private _fsWatchers: vscode.FileSystemWatcher[] = [];
-  private _silenceTimer: ReturnType<typeof setTimeout> | undefined;
   private _lastActivityAt: Date = new Date();
   private _pollInterval: ReturnType<typeof setInterval> | undefined;
   private _onSilenceDetected: SilenceCallback;
+  private _onErrorDetected: ErrorCallback;
   private _config: ResurrectConfig;
   private _context: vscode.ExtensionContext;
   private _active = false;
@@ -24,11 +27,13 @@ export class SessionWatcher implements vscode.Disposable {
   constructor(
     context: vscode.ExtensionContext,
     config: ResurrectConfig,
-    onSilenceDetected: SilenceCallback
+    onSilenceDetected: SilenceCallback,
+    onErrorDetected: ErrorCallback,
   ) {
     this._context = context;
     this._config = config;
     this._onSilenceDetected = onSilenceDetected;
+    this._onErrorDetected = onErrorDetected;
   }
 
   get active(): boolean {
@@ -52,9 +57,9 @@ export class SessionWatcher implements vscode.Disposable {
     this._lastActivityAt = new Date();
 
     Logger.separator();
-    Logger.info('SessionWatcher starting…');
+    Logger.info('SessionWatcher starting\u2026');
 
-    // ── File-system watches ───────────────────────────────────────────────
+    // ── File-system watches ─────────────────────────────────────────────────────
     const overridePaths = this._config.watchPaths;
     const watchDirs: string[] =
       overridePaths.length > 0 ? overridePaths : discoverWatchDirs(this._context);
@@ -62,27 +67,36 @@ export class SessionWatcher implements vscode.Disposable {
     let watchersCreated = 0;
     for (const dir of watchDirs) {
       try {
-        // vscode.workspace.createFileSystemWatcher accepts
-        // either a workspace RelativePattern or an absolute glob string.
         const glob = new vscode.RelativePattern(
           vscode.Uri.file(dir),
           '**/*.json'
         );
         const watcher = vscode.workspace.createFileSystemWatcher(
           glob,
-          false,  // ignoreCreateEvents
-          false,  // ignoreChangeEvents
-          false   // ignoreDeleteEvents
+          false,
+          false,
+          false
         );
 
         const touchActivity = (uri: vscode.Uri) => {
           Logger.debug(`File activity: ${uri.fsPath}`);
           this._bumpActivity();
+
+          // Content-based error detection on file change
+          if (this._config.contentCheckEnabled) {
+            const error = checkFileForErrors(uri.fsPath);
+            if (error) {
+              this._onErrorDetected(error);
+            }
+          }
         };
 
         watcher.onDidChange(touchActivity);
         watcher.onDidCreate(touchActivity);
-        watcher.onDidDelete(touchActivity);
+        watcher.onDidDelete((uri: vscode.Uri) => {
+          Logger.debug(`File deleted: ${uri.fsPath}`);
+          this._bumpActivity();
+        });
 
         this._fsWatchers.push(watcher);
         watchersCreated++;
@@ -105,14 +119,15 @@ export class SessionWatcher implements vscode.Disposable {
       Logger.debug(`Heartbeat: ${elapsed}s since last activity (timeout: ${timeout}s)`);
 
       if (elapsed >= timeout) {
-        Logger.warn(`Silence threshold reached (${elapsed}s ≥ ${timeout}s). Triggering resurrection…`);
-        this._bumpActivity(); // reset timer to avoid re-triggering during resurrection
+        Logger.warn(`Silence threshold reached (${elapsed}s >= ${timeout}s). Triggering resurrection\u2026`);
+        this._bumpActivity(); // reset to avoid re-trigger during resurrection
         this._onSilenceDetected();
       }
     }, 15_000);
 
     Logger.info(
       `SessionWatcher active. Silence timeout: ${this._config.silenceTimeoutSeconds}s. ` +
+      `Content check: ${this._config.contentCheckEnabled ? 'ON' : 'OFF'}. ` +
       `Max restarts/day: ${this._config.maxRestartsPerDay}.`
     );
   }
@@ -123,10 +138,6 @@ export class SessionWatcher implements vscode.Disposable {
     }
     this._fsWatchers = [];
 
-    if (this._silenceTimer) {
-      clearTimeout(this._silenceTimer);
-      this._silenceTimer = undefined;
-    }
     if (this._pollInterval) {
       clearInterval(this._pollInterval);
       this._pollInterval = undefined;
