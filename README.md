@@ -2,7 +2,7 @@
 
 > **Keep your autonomous GitHub Copilot Chat loops alive — overnight, unattended, indefinitely.**
 
-[![Version](https://img.shields.io/badge/version-1.3.0-blue.svg)](https://github.com/putersdcat/copilot-resurrect)
+[![Version](https://img.shields.io/badge/version-1.4.0-blue.svg)](https://github.com/putersdcat/copilot-resurrect)
 [![VS Code](https://img.shields.io/badge/VS%20Code-%5E1.85.0-007ACC.svg)](https://code.visualstudio.com/)
 
 ---
@@ -26,7 +26,7 @@ These workflows routinely run **5–18+ hours** unattended — when they stay al
 
 When termination happens, the chat panel simply **stops**. No restart. No alert. Hours of autonomous work lost.
 
-**Copilot Resurrect solves this.** It watches for silence and content-based error patterns, detects a dead session, and automatically re-injects your ignition prompt to start a fresh session — all while you sleep.
+**Copilot Resurrect solves this.** It watches for silence and content-based error patterns, detects a dead session, and automatically recovers — either by retrying in-place (preserving work context) or injecting your ignition prompt to start a fresh session.
 
 ---
 
@@ -35,7 +35,7 @@ When termination happens, the chat panel simply **stops**. No restart. No alert.
 | Feature | Detail |
 |---|---|
 | 🔍 **Dual Detection** | Silence-based (`FileSystemWatcher` + polling heartbeat) and content-based error scanning of session files |
-| 🔄 **Auto Resurrection** | Opens Copilot Chat, injects your ignition prompt via the VS Code chat API, and submits — no clipboard, no human required |
+| 🔄 **Smart Recovery** | Error triggers (rate-limit, server errors) retry in-place via "Try Again"; silence triggers inject ignition prompt |
 | ⏱️ **Configurable Timeout** | 60–600 second silence window before declaring a session dead (default: 180s) |
 | 📈 **Exponential Backoff** | Rate-limit cooldowns double on each consecutive failure (base × 2^n, capped) instead of fixed delays |
 | 🛡️ **Daily Rate Cap** | Configurable max restarts per calendar day (default: 50) to prevent infinite storms |
@@ -58,7 +58,7 @@ When termination happens, the chat panel simply **stops**. No restart. No alert.
 Install the `.vsix` directly:
 
 ```
-code --install-extension copilot-resurrect-1.3.0.vsix
+code --install-extension copilot-resurrect-1.4.0.vsix
 ```
 
 Or install from the Extensions Marketplace (when published).
@@ -112,7 +112,7 @@ All settings are available under **Settings → Extensions → Copilot Resurrect
 | `approvalsMode` | `string` | `"default"` | Approvals mode: `default`, `bypass`, `autopilot` |
 | `rateLimitCooldownBaseSeconds` | `number` | `30` | Base cooldown for exponential backoff (5–300) |
 | `rateLimitCooldownMaxSeconds` | `number` | `600` | Max cooldown cap for backoff (60–3600) |
-| `startNewSession` | `boolean` | `true` | Start new chat session on resurrection |
+| `startNewSession` | `boolean` | `true` | Start new chat session on silence resurrection (error triggers always retry in-place) |
 | `contentCheckEnabled` | `boolean` | `true` | Enable content-based error detection in session files |
 | `watchPaths` | `string[]` | `[]` | Override auto-discovered watch paths (advanced) |
 
@@ -181,18 +181,35 @@ Path discovery is automatic and prioritised in this order:
 
 ### Resurrection Sequence
 
+The extension uses **two recovery strategies** depending on the trigger:
+
+#### Error Triggers (rate-limit, server error, content-filtered)
+
 ```
-1. Calculate cooldown (exponential backoff if rate-limited)
+1. Calculate cooldown (exponential backoff)
 2. Wait for cooldown with status bar countdown
-3. Open new chat session (if startNewSession enabled)
-4. Switch to configured agent mode (e.g. BasicBitch)
-5. Show approvals mode reminder (if non-default)
-6. Inject ignition prompt via workbench.action.chat.open
-7. Submit via workbench.action.chat.submit
-8. Reset error detection cache
-9. Increment daily counter (persisted via globalState)
-10. Reset silence timer
+3. Focus existing chat panel
+4. Execute workbench.action.chat.retry ("Try Again" button)
+5. Reset error detection cache
+6. Increment daily counter
 ```
+
+This preserves the full conversation history — the model sees everything that came before and can resume interrupted work.
+
+#### Silence / Manual Triggers
+
+```
+1. Open new chat session (if startNewSession enabled)
+2. Switch to configured agent mode (e.g. BasicBitch)
+3. Show approvals mode reminder (if non-default)
+4. Inject ignition prompt via workbench.action.chat.open
+5. Submit via workbench.action.chat.submit
+6. Reset error detection cache
+7. Increment daily counter
+8. Reset backoff counter (successful non-error resurrection)
+```
+
+If `workbench.action.chat.retry` fails (e.g., no prior response to retry), the engine automatically falls back to the ignition-prompt path.
 
 ### Exponential Backoff
 
@@ -287,7 +304,7 @@ copilot-resurrect/
 │   ├── extension.ts          ← Activate/deactivate, command registration, pickers
 │   ├── config.ts             ← Settings schema, getConfig(), buildFullPrompt(), agent discovery
 │   ├── sessionWatcher.ts     ← FileSystemWatcher + polling heartbeat + content scan trigger
-│   ├── resurrectionEngine.ts ← Resurrection sequence, exponential backoff, daily counter
+│   ├── resurrectionEngine.ts ← Resurrection sequence, exponential backoff, daily counter, retry-in-place
 │   ├── errorDetector.ts      ← Content-based error pattern matching (rate_limit, server_error, etc.)
 │   ├── pathDiscovery.ts      ← Dynamic Copilot Chat storage path discovery
 │   ├── logger.ts             ← Timestamped Output Channel wrapper
@@ -314,7 +331,7 @@ npm run package               # produces copilot-resurrect-x.x.x.vsix
 **Install locally:**
 
 ```powershell
-code --install-extension copilot-resurrect-1.3.0.vsix --force
+code --install-extension copilot-resurrect-1.4.0.vsix --force
 ```
 
 ---
