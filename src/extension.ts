@@ -17,9 +17,9 @@ let _watcher: SessionWatcher | undefined;
 let _engine: ResurrectionEngine | undefined;
 let _statusBar: ResurrectStatusBar | undefined;
 
-const EXT_VERSION = '1.3.0';
+const EXT_VERSION = '1.4.0';
 
-// ── Activate ────────────────────────────────────────────────────────────────────────
+// ── Activate ──────────────────────────────────────────────────────────────────
 export function activate(context: vscode.ExtensionContext): void {
   Logger.init();
   Logger.separator();
@@ -41,7 +41,7 @@ export function activate(context: vscode.ExtensionContext): void {
     _watcher
   );
 
-  // ── Register commands ─────────────────────────────────────────────────────────────────
+  // ── Register commands ──────────────────────────────────────────────────────
   context.subscriptions.push(
 
     vscode.commands.registerCommand('copilot-resurrect.enable', async () => {
@@ -144,7 +144,7 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }),
 
-    // ── Model picker commands ─────────────────────────────────────────────────────────
+    // ── Model picker commands ─────────────────────────────────────────────
     vscode.commands.registerCommand('copilot-resurrect.selectModel', async () => {
       await pickModelAndSave('preferredModel', 'Select preferred model for Copilot Chat');
     }),
@@ -153,10 +153,10 @@ export function activate(context: vscode.ExtensionContext): void {
       await pickModelAndSave('fallbackModel', 'Select fallback model (used after rate-limit)');
     }),
 
-    // ── Participant picker ───────────────────────────────────────────────────────────
+    // ── Participant picker ───────────────────────────────────────────────
     vscode.commands.registerCommand('copilot-resurrect.selectParticipant', async () => {
       const items: vscode.QuickPickItem[] = [
-        { label: '(none)', description: 'No participant prefix \u2014 use default Copilot' },
+        { label: '(none)', description: 'No participant prefix — use default Copilot' },
         { label: '@copilot', description: 'Explicit Copilot participant' },
         { label: '@workspace', description: 'Workspace-aware participant' },
         { label: '@vscode', description: 'VS Code help participant' },
@@ -178,7 +178,7 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }),
 
-    // ── Agent mode picker ───────────────────────────────────────────────────────
+    // ── Agent mode picker ─────────────────────────────────────────────
     vscode.commands.registerCommand('copilot-resurrect.selectAgentMode', async () => {
       const modes = await discoverAgentModes();
       const cfg = getConfig();
@@ -191,7 +191,7 @@ export function activate(context: vscode.ExtensionContext): void {
       // Add "none" option at top
       items.unshift({
         label: '(none)',
-        description: 'No agent mode \u2014 use whatever mode the chat opens in',
+        description: 'No agent mode — use whatever mode the chat opens in',
       });
       const picked = await vscode.window.showQuickPick(items, {
         placeHolder: 'Select agent mode for resurrected sessions',
@@ -211,7 +211,7 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }),
 
-    // ── Approvals mode picker ────────────────────────────────────────────────────
+    // ── Approvals mode picker ────────────────────────────────────────────
     vscode.commands.registerCommand('copilot-resurrect.selectApprovalsMode', async () => {
       const items: vscode.QuickPickItem[] = [
         {
@@ -252,7 +252,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
   );
 
-  // ── React to configuration changes ──────────────────────────────────────────
+  // ── React to configuration changes ────────────────────────────────────────
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration(e => {
       if (e.affectsConfiguration(EXT_ID)) {
@@ -271,7 +271,7 @@ export function activate(context: vscode.ExtensionContext): void {
     })
   );
 
-  // ── Auto-start if enabled ─────────────────────────────────────────────────────
+  // ── Auto-start if enabled ─────────────────────────────────────────────────
   const cfg = getConfig();
   if (cfg.enabled) {
     startWatcher();
@@ -283,104 +283,8 @@ export function activate(context: vscode.ExtensionContext): void {
   Logger.info(`Copilot Resurrect v${EXT_VERSION} activated.`);
 }
 
-// ── Deactivate ────────────────────────────────────────────────────────────────────
+// ── Deactivate ────────────────────────────────────────────────────────────────
 export function deactivate(): void {
   stopWatcher();
   Logger.info('Copilot Resurrect extension deactivated.');
-}
-
-// ── Internal helpers ───────────────────────────────────────────────────────────────
-
-function startWatcher(): void {
-  const cfg = getConfig();
-  _watcher?.start(cfg);
-  updateStatusBar();
-}
-
-function stopWatcher(): void {
-  _watcher?.stop();
-  updateStatusBar();
-}
-
-function updateStatusBar(): void {
-  const cfg = getConfig();
-  const count = _engine?.todayCount ?? 0;
-  _statusBar?.setEnabled(cfg.enabled, count, cfg.maxRestartsPerDay);
-}
-
-/** Triggered by SessionWatcher when silence threshold is exceeded. */
-async function handleSilence(): Promise<void> {
-  const cfg = getConfig();
-
-  Logger.warn('Silence detected \u2014 initiating resurrection sequence.');
-  _statusBar?.setResurrecting();
-
-  const success = await _engine!.resurrect(cfg, false, 'silence');
-
-  if (success) {
-    _watcher?.bumpActivity();
-  }
-
-  updateStatusBar();
-}
-
-/** Triggered by SessionWatcher when an error pattern is detected in session files. */
-async function handleError(error: DetectedError): Promise<void> {
-  const cfg = getConfig();
-
-  Logger.warn(`Error pattern detected: ${error.pattern} (type: ${error.type})`);
-  Logger.warn(`  File: ${error.filePath}`);
-
-  if (_engine?.isResurrecting || _engine?.isCoolingDown) {
-    Logger.debug('Resurrection or cooldown already in progress \u2014 ignoring error trigger.');
-    return;
-  }
-
-  _statusBar?.setResurrecting();
-
-  const success = await _engine!.resurrect(cfg, false, error.type);
-
-  if (success) {
-    _watcher?.bumpActivity();
-  }
-
-  updateStatusBar();
-}
-
-/** Show a QuickPick of available Copilot models and save the selection. */
-async function pickModelAndSave(setting: string, title: string): Promise<void> {
-  const models = await getAvailableModels();
-  if (models.length === 0) {
-    vscode.window.showWarningMessage(
-      'No Copilot language models found. Ensure GitHub Copilot is installed and authenticated.'
-    );
-    return;
-  }
-
-  const items: vscode.QuickPickItem[] = [
-    { label: '(none)', description: 'Use the default model selected in Copilot Chat' },
-    ...models.map(m => ({
-      label: m.name || m.id,
-      description: `Family: ${m.family} | Max tokens: ${m.maxInputTokens}`,
-      detail: `ID: ${m.id}`,
-    })),
-  ];
-
-  const picked = await vscode.window.showQuickPick(items, {
-    placeHolder: title,
-    title: `Copilot Resurrect: ${title}`,
-    matchOnDescription: true,
-    matchOnDetail: true,
-  });
-
-  if (picked) {
-    const value = picked.label === '(none)' ? '' : picked.label;
-    await vscode.workspace
-      .getConfiguration(EXT_ID)
-      .update(setting, value, vscode.ConfigurationTarget.Global);
-    Logger.info(`${setting} set to: ${value || '(none)'}`);
-    vscode.window.showInformationMessage(
-      `Copilot Resurrect: ${setting} set to "${value || '(none)'}".`
-    );
-  }
 }
