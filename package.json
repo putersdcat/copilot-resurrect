@@ -2,11 +2,11 @@
   "name": "copilot-resurrect",
   "displayName": "Copilot Resurrect",
   "description": "Automatically resurrects a dead GitHub Copilot Chat session by re-injecting your configured ignition prompt — keep autonomous coding loops alive overnight.",
-  "version": "1.4.1",
+  "version": "1.4.3",
   "publisher": "EricAnderson",
   "repository": {
     "type": "git",
-    "url": "https://github.com/putersdcat/copilot-resurrect"
+    "url": "https://github.com/putersdcat/HelkinSwarm"
   },
   "icon": "ICON-200x200.png",
   "engines": {
@@ -120,6 +120,14 @@
           },
           "default": [],
           "description": "Override the list of file-system paths the watcher monitors for Copilot Chat activity. Leave empty for automatic discovery (recommended)."
+        },
+        "copilot-resurrect.watchIgnorePatterns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": ["**/.git/**"],
+          "description": "Glob patterns for paths to exclude from workspace activity detection. Useful for silencing noise from .git internals, node_modules, or other non-Copilot file changes. Supports ** (any depth), * (within segment), and ? (single char). Default: ['**/.git/**']."
         }
       }
     },

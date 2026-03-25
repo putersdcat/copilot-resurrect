@@ -19,6 +19,7 @@ export interface ResurrectConfig {
   startNewSession: boolean;
   contentCheckEnabled: boolean;
   watchPaths: string[];
+  watchIgnorePatterns: string[];
 }
 
 export function getConfig(): ResurrectConfig {
@@ -38,6 +39,7 @@ export function getConfig(): ResurrectConfig {
     startNewSession: cfg.get<boolean>('startNewSession', true),
     contentCheckEnabled: cfg.get<boolean>('contentCheckEnabled', true),
     watchPaths: cfg.get<string[]>('watchPaths', []),
+    watchIgnorePatterns: cfg.get<string[]>('watchIgnorePatterns', ['**/.git/**']),
   };
 }
 
@@ -85,9 +87,9 @@ export interface AgentModeInfo {
 
 /** Built-in Copilot Chat modes. */
 const BUILTIN_MODES: AgentModeInfo[] = [
-  { name: 'agent', description: 'Agent mode \u2014 full tool access (default)', source: 'builtin' },
-  { name: 'edit', description: 'Edit mode \u2014 can edit files, no terminal', source: 'builtin' },
-  { name: 'ask', description: 'Ask mode \u2014 read-only, no tools', source: 'builtin' },
+  { name: 'agent', description: 'Agent mode — full tool access (default)', source: 'builtin' },
+  { name: 'edit', description: 'Edit mode — can edit files, no terminal', source: 'builtin' },
+  { name: 'ask', description: 'Ask mode — read-only, no tools', source: 'builtin' },
 ];
 
 /**

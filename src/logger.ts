@@ -42,7 +42,7 @@ export class Logger {
   }
 
   static separator(): void {
-    Logger.channel.appendLine('\u2500'.repeat(72));
+    Logger.channel.appendLine('─'.repeat(72));
   }
 
   static show(): void {

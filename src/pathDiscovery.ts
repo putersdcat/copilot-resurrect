@@ -44,7 +44,7 @@ export function discoverWatchDirs(context: vscode.ExtensionContext): string[] {
     Logger.warn(`workspaceStorage discovery failed: ${err}`);
   }
 
-  // ── 2. globalStorage path  ─────────────────────────────────────────────
+  // ── 2. globalStorage path  ───────────────────────────────────────────────
   try {
     const globalStoragePath = context.globalStorageUri?.fsPath;
     if (globalStoragePath) {
@@ -59,7 +59,7 @@ export function discoverWatchDirs(context: vscode.ExtensionContext): string[] {
     Logger.warn(`globalStorage discovery failed: ${err}`);
   }
 
-  // ── 3. Hard-coded fallback paths (Windows + macOS + Linux)  ─────────
+  // ── 3. Hard-coded fallback paths (Windows + macOS + Linux)  ─────────────
   const fallbackCandidates = buildFallbackPaths();
   for (const candidate of fallbackCandidates) {
     if (fs.existsSync(candidate) && !dirs.includes(candidate)) {
