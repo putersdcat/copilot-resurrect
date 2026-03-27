@@ -1,9 +1,11 @@
-# Copilot Resurrect
+<div align="center">
+  <img src="ICON-200x200.png" alt="Copilot Resurrect" width="128" height="128">
+  <h1>Copilot Resurrect</h1>
+  <p><strong>Keep your autonomous GitHub Copilot Chat loops alive — overnight, unattended, indefinitely.</strong></p>
 
-> **Keep your autonomous GitHub Copilot Chat loops alive — overnight, unattended, indefinitely.**
-
-[![Version](https://img.shields.io/badge/version-1.3.0-blue.svg)](https://github.com/putersdcat/copilot-resurrect)
-[![VS Code](https://img.shields.io/badge/VS%20Code-%5E1.85.0-007ACC.svg)](https://code.visualstudio.com/)
+  [![Version](https://img.shields.io/badge/version-1.4.4-blue.svg)](https://github.com/putersdcat/copilot-resurrect)
+  [![VS Code](https://img.shields.io/badge/VS%20Code-%5E1.85.0-007ACC.svg)](https://code.visualstudio.com/)
+</div>
 
 ---
 
@@ -34,8 +36,11 @@ When termination happens, the chat panel simply **stops**. No restart. No alert.
 
 | Feature | Detail |
 |---|---|
-| 🔍 **Dual Detection** | Silence-based (`FileSystemWatcher` + polling heartbeat) and content-based error scanning of session files |
-| 🔄 **Auto Resurrection** | Opens Copilot Chat, injects your ignition prompt via the VS Code chat API, and submits — no clipboard, no human required |
+| 🔍 **Multi-Channel Detection** | Five detection channels: Copilot session file watcher + workspace file events + editor changes + file lifecycle + terminal activity |
+| 🤖 **Sub-Agent Awareness** | Workspace-root `FileSystemWatcher` (`**/*`) catches all file changes from sub-agents, even without open editor tabs |
+| 🔇 **Smart Noise Filtering** | `watchIgnorePatterns` (default: `.git/**`) filters false activity from git internals, `node_modules`, and build outputs |
+| 📄 **Content-Based Error Detection** | Scans Copilot Chat session files for rate-limit, server error, and content-filtered patterns |
+| 🔄 **Auto Resurrection** | Opens Copilot Chat, injects your ignition prompt via VS Code chat API, and submits — no clipboard, no human required |
 | ⏱️ **Configurable Timeout** | 60–600 second silence window before declaring a session dead (default: 180s) |
 | 📈 **Exponential Backoff** | Rate-limit cooldowns double on each consecutive failure (base × 2^n, capped) instead of fixed delays |
 | 🛡️ **Daily Rate Cap** | Configurable max restarts per calendar day (default: 50) to prevent infinite storms |
@@ -58,7 +63,7 @@ When termination happens, the chat panel simply **stops**. No restart. No alert.
 Install the `.vsix` directly:
 
 ```
-code --install-extension copilot-resurrect-1.3.0.vsix
+code --install-extension copilot-resurrect-1.4.4.vsix
 ```
 
 Or install from the Extensions Marketplace (when published).
@@ -115,6 +120,7 @@ All settings are available under **Settings → Extensions → Copilot Resurrect
 | `startNewSession` | `boolean` | `true` | Start new chat session on resurrection |
 | `contentCheckEnabled` | `boolean` | `true` | Enable content-based error detection in session files |
 | `watchPaths` | `string[]` | `[]` | Override auto-discovered watch paths (advanced) |
+| `watchIgnorePatterns` | `string[]` | `["**/.git/**", ".git/**"]` | Glob patterns to exclude from workspace activity detection |
 
 All settings are prefixed with `copilot-resurrect.` in `settings.json`.
 
@@ -159,13 +165,35 @@ All commands are available via the Command Palette (`Ctrl+Shift+P`):
 
 ### Detection
 
+Copilot Resurrect uses **five independent detection channels** to monitor Copilot Chat and sub-agent activity:
+
 ```
 SessionWatcher
   │
-  ├─ FileSystemWatcher → github.copilot-chat/chatSessions/*.json
+  ├─ 1. Copilot Session File Watcher
+  │     FileSystemWatcher → github.copilot-chat/chatSessions/*.json
   │     onDidChange / onDidCreate / onDidDelete → bump last-activity timestamp
   │
-  ├─ Content-based error scanner (tail 4KB of session files)
+  ├─ 2. Workspace-Root File Watcher
+  │     FileSystemWatcher → **/* (entire workspace)
+  │     Catches ALL file creates/edits/deletes (e.g., sub-agent writing to disk)
+  │     Filtered via watchIgnorePatterns (default: `.git/**`)
+  │
+  ├─ 3. Editor Document Events
+  │     onDidChangeTextDocument / onDidSaveTextDocument
+  │     Fires when open documents change in tabs
+  │
+  ├─ 4. File Lifecycle Events
+  │     onDidCreateFiles / onDidDeleteFiles / onDidRenameFiles
+  │     Fires when extensions create/delete/rename via workspace API
+  │
+  ├─ 5. Terminal Activity Events
+  │     onDidOpenTerminal / onDidChangeActiveTerminal
+  │     onDidStartTerminalShellExecution (VS Code 1.93+)
+  │     Detects sub-agent command execution
+  │
+  ├─ Content-Based Error Scanner
+  │     Tail 4KB of Copilot session files
   │     Detects: rate_limit, server_error, content_filtered patterns
   │     Triggers immediate resurrection with appropriate backoff
   │
@@ -173,11 +201,17 @@ SessionWatcher
         if (now - lastActivity) >= silenceTimeoutSeconds → trigger resurrection
 ```
 
-Path discovery is automatic and prioritised in this order:
+**Path Discovery** is automatic and prioritised:
 1. `workspaceStorage/<hash>/github.copilot-chat/chatSessions/`
 2. `workspaceStorage/<hash>/github.copilot-chat/`
 3. `globalStorage/github.copilot-chat/`
 4. Hard-coded platform fallbacks (`%APPDATA%\Code\User\globalStorage\...`)
+
+**Noise Filtering** via `watchIgnorePatterns`:
+- Default patterns: `["**/.git/**", ".git/**"]`
+- Prevents false activity from git internals (e.g., `.git/FETCH_HEAD` on `git fetch`)
+- Supports glob syntax: `**` (any depth), `*` (within segment), `?` (single char)
+- Evaluated against both absolute and workspace-relative paths
 
 ### Resurrection Sequence
 
@@ -314,7 +348,7 @@ npm run package               # produces copilot-resurrect-x.x.x.vsix
 **Install locally:**
 
 ```powershell
-code --install-extension copilot-resurrect-1.3.0.vsix --force
+code --install-extension copilot-resurrect-1.4.4.vsix --force
 ```
 
 ---
