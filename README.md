@@ -36,12 +36,10 @@ When termination happens, the chat panel simply **stops**. No restart. No alert.
 
 | Feature | Detail |
 |---|---|
-| 🔍 **Multi-Channel Detection** | Five detection channels: Copilot session file watcher + workspace file events + editor changes + file lifecycle + terminal activity |
-| 🤖 **Sub-Agent Awareness** | Workspace-root `FileSystemWatcher` (`**/*`) catches all file changes from sub-agents, even without open editor tabs |
-| 🔇 **Smart Noise Filtering** | `watchIgnorePatterns` (default: `.git/**`) filters false activity from git internals, `node_modules`, and build outputs |
-| 📄 **Content-Based Error Detection** | Scans Copilot Chat session files for rate-limit, server error, and content-filtered patterns |
-| 🔄 **Auto Resurrection** | Opens Copilot Chat, injects your ignition prompt via VS Code chat API, and submits — no clipboard, no human required |
-| ⏱️ **Configurable Timeout** | 60–600 second silence window before declaring a session dead (default: 180s) |
+<<<<<<< HEAD
+| 🔍 **Dual Detection** | Silence-based (`FileSystemWatcher` + polling heartbeat) and content-based error scanning of session files |
+| 🔄 **Auto Resurrection** | Opens Copilot Chat, injects your ignition prompt via the VS Code chat API, and submits — no clipboard, no human required |
+| ⏱️ **Configurable Timeout** | 60–1200 second silence window before declaring a session dead (default: 180s) |
 | 📈 **Exponential Backoff** | Rate-limit cooldowns double on each consecutive failure (base × 2^n, capped) instead of fixed delays |
 | 🛡️ **Daily Rate Cap** | Configurable max restarts per calendar day (default: 50) to prevent infinite storms |
 | 💾 **Persistent State** | Restart counter and backoff state persist across VS Code restarts via `globalState` |
@@ -108,7 +106,7 @@ All settings are available under **Settings → Extensions → Copilot Resurrect
 |---|---|---|---|
 | `enabled` | `boolean` | `false` | Enable/disable the watcher |
 | `ignitionPrompt` | `string` | `""` | The prompt injected on resurrection |
-| `silenceTimeoutSeconds` | `number` | `180` | Seconds of silence before resurrection triggers (60–600) |
+| `silenceTimeoutSeconds` | `number` | `180` | Seconds of silence before resurrection triggers (60–1200) |
 | `maxRestartsPerDay` | `number` | `50` | Maximum auto-restarts per calendar day (1–200) |
 | `preferredModel` | `string` | `""` | Preferred Copilot model (select via command) |
 | `fallbackModel` | `string` | `""` | Fallback model after rate-limit (select via command) |
