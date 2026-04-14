@@ -36,7 +36,6 @@ When termination happens, the chat panel simply **stops**. No restart. No alert.
 
 | Feature | Detail |
 |---|---|
-<<<<<<< HEAD
 | 🔍 **Dual Detection** | Silence-based (`FileSystemWatcher` + polling heartbeat) and content-based error scanning of session files |
 | 🔄 **Auto Resurrection** | Opens Copilot Chat, injects your ignition prompt via the VS Code chat API, and submits — no clipboard, no human required |
 | ⏱️ **Configurable Timeout** | 60–1200 second silence window before declaring a session dead (default: 180s) |
@@ -63,6 +62,8 @@ Install the `.vsix` directly:
 ```
 code --install-extension copilot-resurrect-1.4.4.vsix
 ```
+
+When a GitHub release is published, the built `.vsix` will be attached as a release asset. You can download it from the release page or use the latest release asset URL for installs.
 
 Or install from the Extensions Marketplace (when published).
 
