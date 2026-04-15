@@ -63,7 +63,14 @@ Install the `.vsix` directly:
 code --install-extension copilot-resurrect-1.4.4.vsix
 ```
 
-When a GitHub release is published, the built `.vsix` will be attached as a release asset. You can download it from the release page or use the latest release asset URL for installs.
+#### From GitHub Releases
+
+When a GitHub release is published, the built `.vsix` is attached as a release asset. You can:
+
+1. Download it from the [Releases page](https://github.com/putersdcat/copilot-resurrect/releases)
+2. Install locally: `code --install-extension copilot-resurrect-<version>.vsix`
+
+VS Code will automatically check for updates when a new release is published if you have the extension installed from a release asset.
 
 Or install from the Extensions Marketplace (when published).
 
