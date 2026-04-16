@@ -3,7 +3,7 @@
   <h1>Copilot Resurrect</h1>
   <p><strong>Keep your autonomous GitHub Copilot Chat loops alive — overnight, unattended, indefinitely.</strong></p>
 
-  [![Version](https://img.shields.io/badge/version-1.4.4-blue.svg)](https://github.com/putersdcat/copilot-resurrect)
+  [![Version](https://img.shields.io/badge/version-1.4.7-blue.svg)](https://github.com/putersdcat/copilot-resurrect)
   [![VS Code](https://img.shields.io/badge/VS%20Code-%5E1.85.0-007ACC.svg)](https://code.visualstudio.com/)
 </div>
 
@@ -64,7 +64,7 @@ When termination happens, the chat panel simply **stops**. No restart. No alert.
 Install the `.vsix` directly:
 
 ```
-code --install-extension copilot-resurrect-1.4.4.vsix
+code --install-extension copilot-resurrect-1.4.7.vsix
 ```
 
 #### From GitHub Releases
@@ -371,7 +371,7 @@ npm run package               # produces copilot-resurrect-x.x.x.vsix
 **Install locally:**
 
 ```powershell
-code --install-extension copilot-resurrect-1.4.4.vsix --force
+code --install-extension copilot-resurrect-1.4.7.vsix --force
 ```
 
 ---
