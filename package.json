@@ -2,7 +2,7 @@
   "name": "copilot-resurrect",
   "displayName": "Copilot Resurrect",
   "description": "Automatically resurrects a dead GitHub Copilot Chat session by re-injecting your configured ignition prompt — keep autonomous coding loops alive overnight.",
-  "version": "1.4.4",
+  "version": "1.4.7",
   "publisher": "EricAnderson",
   "repository": {
     "type": "git",
@@ -36,82 +36,145 @@
         "copilot-resurrect.enabled": {
           "type": "boolean",
           "default": false,
-          "description": "Enable/disable the Copilot session resurrection watcher. When enabled, the watcher will automatically restart a dead Copilot Chat session using your ignition prompt."
+          "scope": "window",
+          "order": 70,
+          "description": "Workspace-only: enable/disable the Copilot session resurrection watcher for the current workspace window."
         },
         "copilot-resurrect.ignitionPrompt": {
           "type": "string",
           "default": "",
           "editPresentation": "multilineText",
-          "description": "The prompt to inject when resurrecting a dead Copilot Chat session. This should be your autonomous loop ignition prompt."
+          "scope": "window",
+          "order": 80,
+          "description": "Workspace-only: the prompt to inject when resurrecting a dead Copilot Chat session in this workspace."
         },
         "copilot-resurrect.silenceTimeoutSeconds": {
           "type": "number",
           "default": 180,
           "minimum": 60,
           "maximum": 1200,
-          "description": "How many seconds of silence before declaring the Copilot Chat session dead and triggering resurrection. Default: 180s (3 minutes). Supported range: 60-1200s."
+          "scope": "window",
+          "order": 140,
+          "description": "Workspace-only: how many seconds of silence before declaring the Copilot Chat session dead and triggering resurrection. Default: 180s (3 minutes). Supported range: 60-1200s."
         },
         "copilot-resurrect.maxRestartsPerDay": {
           "type": "number",
           "default": 50,
           "minimum": 1,
           "maximum": 200,
-          "description": "Maximum number of automatic session resurrections allowed per calendar day. Prevents infinite-loop storms. Default: 50."
+          "scope": "window",
+          "order": 150,
+          "description": "Workspace-only: maximum number of automatic session resurrections allowed per calendar day. Prevents infinite-loop storms. Default: 50."
         },
         "copilot-resurrect.preferredModel": {
           "type": "string",
           "default": "",
-          "description": "Preferred Copilot Chat model (informational — select via command 'Select Preferred Model'). The model must be set in the Copilot Chat UI dropdown."
+          "scope": "window",
+          "order": 10,
+          "description": "Workspace-only: preferred Copilot Chat model for this workspace. The active chat UI model may still need to be selected manually depending on mode limitations."
         },
         "copilot-resurrect.fallbackModel": {
           "type": "string",
           "default": "",
-          "description": "Fallback model to suggest when the primary is rate-limited (informational — select via command 'Select Fallback Model')."
+          "scope": "window",
+          "order": 20,
+          "description": "Workspace-only: legacy single fallback model to suggest when the primary is rate-limited. Prefer fallbackModelChain for new configurations."
+        },
+        "copilot-resurrect.fallbackModelChain": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "window",
+          "order": 30,
+          "description": "Workspace-only: ordered list of fallback models to suggest after a rate-limit event. The legacy single fallbackModel setting is still supported and is appended automatically if not already included."
         },
         "copilot-resurrect.chatParticipant": {
           "type": "string",
           "default": "",
-          "description": "Chat participant to prefix the ignition prompt with (e.g. 'copilot', 'workspace'). Leave blank for no prefix. Select via command 'Select Chat Participant'."
+          "scope": "window",
+          "order": 60,
+          "description": "Workspace-only: chat participant to prefix the ignition prompt with (e.g. 'copilot', 'workspace'). Leave blank for no prefix."
         },
         "copilot-resurrect.agentMode": {
           "type": "string",
           "default": "",
-          "description": "Agent mode to activate when resurrecting a session. Discovers custom agents from .github/agents/*.agent.md in the workspace. Select via command 'Select Agent Mode'."
+          "scope": "window",
+          "order": 40,
+          "description": "Workspace-only: agent mode to activate when resurrecting a session. Discovers custom agents from .github/agents/*.agent.md in the workspace."
         },
         "copilot-resurrect.approvalsMode": {
           "type": "string",
           "default": "default",
+          "scope": "window",
+          "order": 50,
           "enum": ["default", "bypass", "autopilot"],
           "enumDescriptions": [
             "Default Approvals — standard safety checks",
             "Bypass Approvals — skip confirmation prompts (requires manual enable in new sessions)",
             "Autopilot (Preview) — full autonomous mode (requires manual enable in new sessions)"
           ],
-          "description": "Preferred approvals mode for resurrected sessions. Non-default modes will show a reminder to set this in the Copilot Chat UI when starting new sessions."
+          "description": "Workspace-only: preferred approvals mode for resurrected sessions. Non-default modes will show a reminder to set this in the Copilot Chat UI when starting new sessions."
         },
         "copilot-resurrect.rateLimitCooldownBaseSeconds": {
           "type": "number",
           "default": 30,
           "minimum": 5,
           "maximum": 300,
-          "description": "Base cooldown seconds for rate-limit backoff. Each consecutive rate-limit doubles this (exponential backoff). Default: 30s."
+          "scope": "window",
+          "order": 120,
+          "description": "Workspace-only: base cooldown seconds for rate-limit backoff. Each consecutive rate-limit doubles this (exponential backoff). Default: 30s."
         },
         "copilot-resurrect.rateLimitCooldownMaxSeconds": {
           "type": "number",
           "default": 600,
           "minimum": 60,
           "maximum": 3600,
-          "description": "Maximum cooldown seconds for exponential backoff cap. Default: 600s (10 minutes)."
+          "scope": "window",
+          "order": 130,
+          "description": "Workspace-only: maximum cooldown seconds for exponential backoff cap. Default: 600s (10 minutes)."
         },
         "copilot-resurrect.startNewSession": {
           "type": "boolean",
           "default": true,
-          "description": "Start a new chat session when resurrecting from silence (vs. retrying in the existing session). Error-based triggers (rate-limit, server errors) always retry in-place to preserve in-progress work."
+          "scope": "window",
+          "order": 110,
+          "description": "Workspace-only: start a new chat session when resurrecting from silence (vs. retrying in the existing session)."
+        },
+        "copilot-resurrect.preferNewSessionOnRateLimit": {
+          "type": "boolean",
+          "default": true,
+          "scope": "window",
+          "order": 90,
+          "description": "Workspace-only: when a rate-limit or shadow-rate-limit error is detected, prefer starting a fresh chat session instead of reusing the existing session context."
+        },
+        "copilot-resurrect.promptCompactionEnabled": {
+          "type": "boolean",
+          "default": false,
+          "scope": "window",
+          "order": 100,
+          "description": "Workspace-only: compact the ignition prompt for rate-limit recoveries to reduce token pressure."
+        },
+        "copilot-resurrect.promptCompactionStrategy": {
+          "type": "string",
+          "default": "normalize-whitespace",
+          "scope": "window",
+          "order": 101,
+          "enum": ["normalize-whitespace", "compact-structure", "directive-template"],
+          "enumDescriptions": [
+            "Normalize whitespace and collapse repeated blank lines",
+            "Trim obvious prompt bloat while preserving line structure",
+            "Rewrite the prompt into a shorter recovery-oriented template"
+          ],
+          "description": "Workspace-only: how the ignition prompt should be compacted during rate-limit recovery when promptCompactionEnabled is turned on."
         },
         "copilot-resurrect.contentCheckEnabled": {
           "type": "boolean",
           "default": true,
-          "description": "Enable content-based error detection. Reads Copilot Chat session files to detect rate-limit and server error messages. If disabled, only silence-based detection is used."
+          "scope": "window",
+          "order": 160,
+          "description": "Workspace-only: enable content-based error detection. Reads Copilot Chat session files to detect rate-limit and server error messages."
         },
         "copilot-resurrect.watchPaths": {
           "type": "array",
@@ -119,7 +182,9 @@
             "type": "string"
           },
           "default": [],
-          "description": "Override the list of file-system paths the watcher monitors for Copilot Chat activity. Leave empty for automatic discovery (recommended)."
+          "scope": "window",
+          "order": 170,
+          "description": "Workspace-only: override the list of file-system paths the watcher monitors for Copilot Chat activity. Leave empty for automatic discovery (recommended)."
         },
         "copilot-resurrect.watchIgnorePatterns": {
           "type": "array",
@@ -127,7 +192,9 @@
             "type": "string"
           },
           "default": ["**/.git/**", ".git/**"],
-          "description": "Glob patterns for paths to exclude from workspace activity detection. Matching is performed against both absolute and workspace-relative paths. Useful for silencing noise from .git internals, node_modules, or other non-Copilot file changes. Supports ** (any depth), * (within segment), and ? (single char). Default: ['**/.git/**', '.git/**']."
+          "scope": "window",
+          "order": 180,
+          "description": "Workspace-only: glob patterns for paths to exclude from workspace activity detection. Matching is performed against both absolute and workspace-relative paths. Useful for silencing noise from .git internals, node_modules, or other non-Copilot file changes. Supports ** (any depth), * (within segment), and ? (single char). Default: ['**/.git/**', '.git/**']."
         }
       }
     },
@@ -188,6 +255,16 @@
         "category": "Copilot Resurrect"
       },
       {
+        "command": "copilot-resurrect.selectFallbackModelChain",
+        "title": "Copilot Resurrect: Select Fallback Model Chain",
+        "category": "Copilot Resurrect"
+      },
+      {
+        "command": "copilot-resurrect.discoverModels",
+        "title": "Copilot Resurrect: Discover Available Models",
+        "category": "Copilot Resurrect"
+      },
+      {
         "command": "copilot-resurrect.selectParticipant",
         "title": "Copilot Resurrect: Select Chat Participant",
         "category": "Copilot Resurrect"
@@ -216,6 +293,8 @@
         { "command": "copilot-resurrect.configurePrompt", "when": "true" },
         { "command": "copilot-resurrect.selectModel", "when": "true" },
         { "command": "copilot-resurrect.selectFallbackModel", "when": "true" },
+        { "command": "copilot-resurrect.selectFallbackModelChain", "when": "true" },
+        { "command": "copilot-resurrect.discoverModels", "when": "true" },
         { "command": "copilot-resurrect.selectParticipant", "when": "true" },
         { "command": "copilot-resurrect.selectAgentMode", "when": "true" },
         { "command": "copilot-resurrect.selectApprovalsMode", "when": "true" }

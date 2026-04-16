@@ -5,3 +5,4 @@ out/
 .DS_Store
 dist/
 package-lock.json
+Docs/RealSeenErrors.md

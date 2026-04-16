@@ -40,10 +40,14 @@ When termination happens, the chat panel simply **stops**. No restart. No alert.
 | 🔄 **Auto Resurrection** | Opens Copilot Chat, injects your ignition prompt via the VS Code chat API, and submits — no clipboard, no human required |
 | ⏱️ **Configurable Timeout** | 60–1200 second silence window before declaring a session dead (default: 180s) |
 | 📈 **Exponential Backoff** | Rate-limit cooldowns double on each consecutive failure (base × 2^n, capped) instead of fixed delays |
+| 🌑 **Shadow 429 Awareness** | Detects custom Copilot 429 payloads such as `user_weekly_rate_limited`, `model_rate_limited`, `quota_exceeded`, and related machine-readable error codes |
+| 🧠 **Structured Limit State** | Persists the last known shadow-rate-limit code, severity, cooldown, request metadata, and suggested fallback model across VS Code restarts |
 | 🛡️ **Daily Rate Cap** | Configurable max restarts per calendar day (default: 50) to prevent infinite storms |
 | 💾 **Persistent State** | Restart counter and backoff state persist across VS Code restarts via `globalState` |
 | 🤖 **Agent Mode Picker** | Discovers custom agents from `.github/agents/*.agent.md` in your workspace + built-in modes (agent/edit/ask) |
-| 🎯 **Model Picker** | Enumerates available Copilot models via `vscode.lm.selectChatModels()` for preferred + fallback selection |
+| 🎯 **Model Picker** | Enumerates available Copilot models via `vscode.lm.selectChatModels()` for preferred selection and ordered fallback-chain planning |
+| 🔁 **Fallback Model Chain** | Configure multiple fallback models in priority order; when a model-related shadow limit is detected the extension suggests the next viable model and records it in state/logs |
+| ✂️ **Prompt Compaction** | Optional token-pressure mitigation for rate-limit recoveries: normalize whitespace, compact structure, or rewrite the ignition prompt into a shorter recovery-oriented template |
 | 💬 **Participant Prefix** | Optionally prefix the ignition prompt with `@workspace`, `@copilot`, `@vscode`, or `@terminal` |
 | ✅ **Approvals Mode** | Choose Default / Bypass / Autopilot approvals for resurrected sessions |
 | 🆕 **New Session Control** | Start fresh sessions on resurrection, or retry in the existing panel |
@@ -110,6 +114,8 @@ Open your Copilot Chat panel, queue your ignition prompt manually, and let it ru
 
 All settings are available under **Settings → Extensions → Copilot Resurrect** or in `settings.json`:
 
+> **Workspace-only safety:** Copilot Resurrect intentionally ignores user/global `copilot-resurrect.*` settings at runtime. Only workspace-scoped settings are honored, which prevents one workspace's automation settings from bleeding into another workspace on the same machine.
+
 | Setting | Type | Default | Description |
 |---|---|---|---|
 | `enabled` | `boolean` | `false` | Enable/disable the watcher |
@@ -118,12 +124,16 @@ All settings are available under **Settings → Extensions → Copilot Resurrect
 | `maxRestartsPerDay` | `number` | `50` | Maximum auto-restarts per calendar day (1–200) |
 | `preferredModel` | `string` | `""` | Preferred Copilot model (select via command) |
 | `fallbackModel` | `string` | `""` | Fallback model after rate-limit (select via command) |
+| `fallbackModelChain` | `string[]` | `[]` | Ordered fallback models to suggest after model-related rate limits |
 | `chatParticipant` | `string` | `""` | Chat participant prefix (`copilot`, `workspace`, `vscode`, `terminal`) |
 | `agentMode` | `string` | `""` | Agent mode for resurrected sessions (select via command) |
 | `approvalsMode` | `string` | `"default"` | Approvals mode: `default`, `bypass`, `autopilot` |
 | `rateLimitCooldownBaseSeconds` | `number` | `30` | Base cooldown for exponential backoff (5–300) |
 | `rateLimitCooldownMaxSeconds` | `number` | `600` | Max cooldown cap for backoff (60–3600) |
 | `startNewSession` | `boolean` | `true` | Start new chat session on resurrection |
+| `preferNewSessionOnRateLimit` | `boolean` | `true` | Force a fresh chat session on rate-limit recovery to reduce token pressure |
+| `promptCompactionEnabled` | `boolean` | `false` | Compact ignition prompts during rate-limit recovery |
+| `promptCompactionStrategy` | `string` | `"normalize-whitespace"` | Compaction mode: `normalize-whitespace`, `compact-structure`, `directive-template` |
 | `contentCheckEnabled` | `boolean` | `true` | Enable content-based error detection in session files |
 | `watchPaths` | `string[]` | `[]` | Override auto-discovered watch paths (advanced) |
 | `watchIgnorePatterns` | `string[]` | `["**/.git/**", ".git/**"]` | Glob patterns to exclude from workspace activity detection |
@@ -158,6 +168,7 @@ All commands are available via the Command Palette (`Ctrl+Shift+P`):
 | **Configure Ignition Prompt** | Set/update the ignition prompt via input box |
 | **Select Preferred Model** | Pick from available Copilot language models |
 | **Select Fallback Model** | Pick a fallback model for rate-limit scenarios |
+| **Select Fallback Model Chain** | Pick multiple fallback models in priority order |
 | **Select Chat Participant** | Choose a chat participant prefix |
 | **Select Agent Mode** | Pick from built-in + workspace custom agents |
 | **Select Approvals Mode** | Choose Default / Bypass / Autopilot |
@@ -200,7 +211,7 @@ SessionWatcher
   │
   ├─ Content-Based Error Scanner
   │     Tail 4KB of Copilot session files
-  │     Detects: rate_limit, server_error, content_filtered patterns
+  │     Detects: custom Copilot shadow 429 codes, server_error, content_filtered patterns
   │     Triggers immediate resurrection with appropriate backoff
   │
   └─ 15-second polling heartbeat
@@ -223,15 +234,17 @@ SessionWatcher
 
 ```
 1. Calculate cooldown (exponential backoff if rate-limited)
-2. Wait for cooldown with status bar countdown
-3. Open new chat session (if startNewSession enabled)
-4. Switch to configured agent mode (e.g. BasicBitch)
-5. Show approvals mode reminder (if non-default)
-6. Inject ignition prompt via workbench.action.chat.open
-7. Submit via workbench.action.chat.submit
-8. Reset error detection cache
-9. Increment daily counter (persisted via globalState)
-10. Reset silence timer
+2. Parse structured shadow-limit metadata (`error.code`, `Retry-After`, `X-RateLimit-*`, request ID)
+3. Compute a recovery plan (fresh session bias, prompt compaction, suggested fallback model)
+4. Wait for cooldown with status bar countdown
+5. Open new chat session (if the effective recovery plan prefers a fresh session)
+6. Switch to configured agent mode (e.g. BasicBitch)
+7. Show approvals mode reminder (if non-default)
+8. Inject ignition prompt via workbench.action.chat.open
+9. Submit via workbench.action.chat.submit
+10. Reset error detection cache
+11. Increment daily counter (persisted via globalState)
+12. Reset silence timer
 ```
 
 ### Exponential Backoff
@@ -285,6 +298,7 @@ The bottom-right status bar shows live state:
 | `$(debug-pause) Resurrect OFF` | Watcher disabled |
 | `$(loading~spin) Resurrecting…` | Resurrection sequence in progress |
 | `$(watch) Cooldown 45s` | Exponential backoff countdown in progress |
+| `$(watch) user_global_rate_limited — 522s` | Persisted shadow-rate-limit cooldown is active |
 
 Click the status bar item to toggle the watcher on/off.
 
@@ -311,6 +325,8 @@ Click the status bar item to toggle the watcher on/off.
 ### Rate-limit back-off feels too aggressive
 
 - Adjust `rateLimitCooldownBaseSeconds` (default: 30) and `rateLimitCooldownMaxSeconds` (default: 600).
+- Enable `promptCompactionEnabled` to reduce prompt weight on rate-limit recoveries.
+- Keep `preferNewSessionOnRateLimit` enabled if long conversations or log pastes tend to trigger shadow limits.
 - Run **Reset Exponential Backoff** to clear the consecutive counter immediately.
 
 ### Verbose debugging
@@ -327,8 +343,9 @@ copilot-resurrect/
 │   ├── extension.ts          ← Activate/deactivate, command registration, pickers
 │   ├── config.ts             ← Settings schema, getConfig(), buildFullPrompt(), agent discovery
 │   ├── sessionWatcher.ts     ← FileSystemWatcher + polling heartbeat + content scan trigger
-│   ├── resurrectionEngine.ts ← Resurrection sequence, exponential backoff, daily counter
-│   ├── errorDetector.ts      ← Content-based error pattern matching (rate_limit, server_error, etc.)
+  │   ├── resurrectionEngine.ts ← Resurrection planning, exponential backoff, daily counter
+  │   ├── errorDetector.ts      ← Content-based error pattern matching + structured shadow 429 parsing
+  │   ├── rateLimitState.ts     ← Persisted shadow-rate-limit state across restarts
 │   ├── pathDiscovery.ts      ← Dynamic Copilot Chat storage path discovery
 │   ├── logger.ts             ← Timestamped Output Channel wrapper
 │   └── statusBar.ts          ← Status bar item lifecycle + cooldown display
@@ -364,7 +381,7 @@ code --install-extension copilot-resurrect-1.4.4.vsix --force
 - Does **not** detect VS Code crashes that take down the entire IDE process.
 - Single-workspace only (does not bridge remote SSH/WSL sessions).
 - Agent mode switching uses `workbench.action.chat.switchChatMode` — if VS Code changes this internal command, mode selection may silently fail (resurrection still works, just in default mode).
-- Model selection is informational — the actual model must be set in the Copilot Chat UI dropdown. The picker helps you track your preference.
+- Automatic unattended model switching is still limited by current VS Code/Copilot surfaces. The fallback chain is fully supported for planning, logging, state persistence, and operator guidance, but some chat modes may still require a manual model switch in the Copilot UI.
 
 ---
 

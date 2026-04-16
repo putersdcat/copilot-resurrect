@@ -16,14 +16,15 @@ export class ResurrectStatusBar implements vscode.Disposable {
     this._item.tooltip = 'Click to toggle Copilot Resurrect watcher';
   }
 
-  setEnabled(enabled: boolean, restartCount?: number, maxRestarts?: number): void {
+  setEnabled(enabled: boolean, restartCount?: number, maxRestarts?: number, detail?: string): void {
     const countStr =
       restartCount !== undefined && maxRestarts !== undefined
         ? ` (${restartCount}/${maxRestarts})`
         : '';
+    const detailStr = detail ? ` — ${detail}` : '';
 
     if (enabled) {
-      this._item.text = `$(debug-restart) Resurrect ON${countStr}`;
+      this._item.text = `$(debug-restart) Resurrect ON${countStr}${detailStr}`;
       this._item.backgroundColor = undefined;
       this._item.color = new vscode.ThemeColor('statusBarItem.prominentForeground');
     } else {
@@ -41,6 +42,11 @@ export class ResurrectStatusBar implements vscode.Disposable {
 
   setCooldown(secondsRemaining: number): void {
     this._item.text = `$(watch) Rate-limited — cooldown ${secondsRemaining}s`;
+    this._item.show();
+  }
+
+  setShadowCooldown(code: string, secondsRemaining: number): void {
+    this._item.text = `$(watch) ${code} — ${secondsRemaining}s`;
     this._item.show();
   }
 

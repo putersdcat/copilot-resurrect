@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.4.7] - 2026-04-16
+
+### Added
+- **`Copilot Resurrect: Discover Available Models` command**: Enumerates all Copilot Chat models via `vscode.lm.selectChatModels` and prints them to the Output channel. Use to identify exact model names for `preferredModel` and `fallbackModelChain` settings.
+- **`normalizeErrorCode()` utility**: Normalizes error codes from all known formats (e.g., `error_code: rate_limited`, `error_code:rate_limited`, bare `rate_limited`) into a consistent internal form. Used by `_selectSuggestedFallbackModel()` to ensure fallback logic works regardless of how the error code appears in session files.
+- **Nested JSON error extraction**: `extractJsonLikeField()` now handles nested `{"error":{"code":"..."}}` structures — the exact format Copilot Chat emits for shadow rate limit errors. Previously only top-level `"code":` fields were parsed.
+- **`copilot-internal rate limit signal` pattern**: Added detection for the Copilot Chat internal log format (`| rateLimited |`) that appears in session file entries when Copilot Chat detects its own rate limit.
+
+### Changed
+- **`ShadowRateLimits.md`**: Rewritten as a real error reference with actual HTTP 429 response format, full error code taxonomy, model-switching investigation findings, and detected pattern inventory.
+- **`ShadowRateLimitIntegrationPlan.md` Section 6**: Updated to reflect the actual model-switching limitation finding: `change_model` strategy is logged and suggested but not executed programmatically. `startNewSession` is the correct unattended proxy behavior.
+
+### Fixed
+- **`extractJsonLikeField` single-quoted values**: Added support for single-quoted JSON string values (`"field": 'value'`).
+- **`_selectSuggestedFallbackModel` normalization**: Now uses `normalizeErrorCode()` so that error codes like `rate_limited` (from `error_code: rate_limited`) are correctly matched against the `shouldSuggestModel` criteria.
+
+### Changed (Investigation)
+- **Issue #2**: Investigated VS Code/Copilot Chat public APIs for unattended model switching. Confirmed no public API exists to programmatically select a specific Copilot Chat model — `github.copilot.chat.openModelPicker` opens the UI picker only, with no argument support. Fresh-session + prompt-compaction is the correct unattended fallback for model-rate-limited scenarios.
+
 ## [1.4.4] - 2026-03-25
 
 ### Fixed

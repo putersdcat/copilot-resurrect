@@ -7,20 +7,23 @@
  */
 import * as vscode from 'vscode';
 import { Logger } from './logger';
-import { getConfig, setEnabled, getAvailableModels, discoverAgentModes, EXT_ID, ApprovalsMode } from './config';
+import { getConfig, setEnabled, getAvailableModels, discoverAgentModes, getEffectiveFallbackModelChain, updateWorkspaceSetting, EXT_ID, ApprovalsMode } from './config';
 import { SessionWatcher } from './sessionWatcher';
 import { ResurrectionEngine } from './resurrectionEngine';
 import { ResurrectStatusBar } from './statusBar';
 import { DetectedError } from './errorDetector';
+import { formatRateLimitStateSummary, loadRateLimitState } from './rateLimitState';
 
 let _watcher: SessionWatcher | undefined;
 let _engine: ResurrectionEngine | undefined;
 let _statusBar: ResurrectStatusBar | undefined;
+let _context: vscode.ExtensionContext | undefined;
 
 const EXT_VERSION = '1.4.4';
 
 // ── Activate ──────────────────────────────────────────────────────────────────
 export function activate(context: vscode.ExtensionContext): void {
+  _context = context;
   Logger.init();
   Logger.separator();
   Logger.info(`Copilot Resurrect v${EXT_VERSION} activating…`);
@@ -45,17 +48,20 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
 
     vscode.commands.registerCommand('copilot-resurrect.enable', async () => {
-      await setEnabled(true);
+      const saved = await setEnabled(true);
+      if (!saved) {
+        return;
+      }
       startWatcher();
-      vscode.window.showInformationMessage('Copilot Resurrect: Watcher ENABLED.');
-      Logger.info('Watcher enabled via command.');
+      vscode.window.showInformationMessage('Copilot Resurrect: Watcher ENABLED for this workspace.');
+      Logger.info('Watcher enabled via command for the current workspace.');
     }),
 
     vscode.commands.registerCommand('copilot-resurrect.disable', async () => {
       await setEnabled(false);
       stopWatcher();
-      vscode.window.showInformationMessage('Copilot Resurrect: Watcher DISABLED.');
-      Logger.info('Watcher disabled via command.');
+      vscode.window.showInformationMessage('Copilot Resurrect: Watcher DISABLED for this workspace.');
+      Logger.info('Watcher disabled via command for the current workspace.');
     }),
 
     vscode.commands.registerCommand('copilot-resurrect.toggle', async () => {
@@ -81,6 +87,8 @@ export function activate(context: vscode.ExtensionContext): void {
       const elapsed = _watcher?.secondsSinceActivity ?? 0;
       const cooling = _engine?.isCoolingDown ?? false;
       const nextCooldown = _engine?.calculateCooldown(cfg) ?? 0;
+      const rateLimitState = _engine ? loadRateLimitState(context) : undefined;
+      const fallbackChain = getEffectiveFallbackModelChain(cfg);
 
       const message = [
         `Copilot Resurrect Status:`,
@@ -94,12 +102,16 @@ export function activate(context: vscode.ExtensionContext): void {
         `  Restarts today: ${count} / ${cfg.maxRestartsPerDay}`,
         `  Model: ${cfg.preferredModel || '(default)'}`,
         `  Fallback model: ${cfg.fallbackModel || '(none)'}`,
+        `  Fallback chain: ${fallbackChain.length ? fallbackChain.join(' -> ') : '(none)'}`,
         `  Participant: ${cfg.chatParticipant || '(none)'}`,
         `  Agent mode: ${cfg.agentMode || '(default)'}`,
         `  Approvals: ${cfg.approvalsMode}`,
         `  New session on resurrect: ${cfg.startNewSession}`,
+        `  Prefer new session on rate limit: ${cfg.preferNewSessionOnRateLimit}`,
+        `  Prompt compaction: ${cfg.promptCompactionEnabled ? cfg.promptCompactionStrategy : 'OFF'}`,
         `  Prompt configured: ${!!cfg.ignitionPrompt}`,
         `  Cooling down: ${cooling}`,
+        `  Last rate-limit state: ${formatRateLimitStateSummary(rateLimitState)}`,
       ].join('\n');
 
       Logger.show();
@@ -136,11 +148,11 @@ export function activate(context: vscode.ExtensionContext): void {
         ignoreFocusOut: true,
       });
       if (input !== undefined) {
-        await vscode.workspace
-          .getConfiguration(EXT_ID)
-          .update('ignitionPrompt', input, vscode.ConfigurationTarget.Global);
-        vscode.window.showInformationMessage('Copilot Resurrect: Ignition prompt saved.');
-        Logger.info(`Ignition prompt updated (${input.length} chars).`);
+        const saved = await updateWorkspaceSetting('ignitionPrompt', input);
+        if (saved) {
+          vscode.window.showInformationMessage('Copilot Resurrect: Workspace ignition prompt saved.');
+          Logger.info(`Ignition prompt updated in workspace settings (${input.length} chars).`);
+        }
       }
     }),
 
@@ -151,6 +163,29 @@ export function activate(context: vscode.ExtensionContext): void {
 
     vscode.commands.registerCommand('copilot-resurrect.selectFallbackModel', async () => {
       await pickModelAndSave('fallbackModel', 'Select fallback model (used after rate-limit)');
+    }),
+
+    vscode.commands.registerCommand('copilot-resurrect.selectFallbackModelChain', async () => {
+      await pickFallbackModelChainAndSave();
+    }),
+
+    vscode.commands.registerCommand('copilot-resurrect.discoverModels', async () => {
+      const models = await getAvailableModels();
+      if (models.length === 0) {
+        vscode.window.showWarningMessage(
+          'No Copilot language models found. Ensure GitHub Copilot is installed and authenticated.'
+        );
+        return;
+      }
+      Logger.show();
+      Logger.info('=== Available Copilot Chat Models ===');
+      for (const m of models) {
+        Logger.info(`  Name: ${m.name} | ID: ${m.id} | Family: ${m.family} | Max tokens: ${m.maxInputTokens}`);
+      }
+      Logger.info(`Total: ${models.length} model(s). Use these names in Preferred Model or Fallback Model Chain settings.`);
+      vscode.window.showInformationMessage(
+        `Copilot Resurrect: Found ${models.length} Copilot model(s). See Output channel for details.`
+      );
     }),
 
     // ── Participant picker ───────────────────────────────────────────────
@@ -168,13 +203,13 @@ export function activate(context: vscode.ExtensionContext): void {
       });
       if (picked) {
         const value = picked.label === '(none)' ? '' : picked.label.replace('@', '');
-        await vscode.workspace
-          .getConfiguration(EXT_ID)
-          .update('chatParticipant', value, vscode.ConfigurationTarget.Global);
-        Logger.info(`Chat participant set to: ${value || '(none)'}`);
-        vscode.window.showInformationMessage(
-          `Copilot Resurrect: Participant set to ${value || '(none)'}.`
-        );
+        const saved = await updateWorkspaceSetting('chatParticipant', value);
+        if (saved) {
+          Logger.info(`Chat participant set in workspace settings to: ${value || '(none)'}`);
+          vscode.window.showInformationMessage(
+            `Copilot Resurrect: Workspace participant set to ${value || '(none)'}.`
+          );
+        }
       }
     }),
 
@@ -201,13 +236,13 @@ export function activate(context: vscode.ExtensionContext): void {
       });
       if (picked) {
         const value = picked.label === '(none)' ? '' : picked.label;
-        await vscode.workspace
-          .getConfiguration(EXT_ID)
-          .update('agentMode', value, vscode.ConfigurationTarget.Global);
-        Logger.info(`Agent mode set to: ${value || '(none)'}`);
-        vscode.window.showInformationMessage(
-          `Copilot Resurrect: Agent mode set to "${value || '(none)'}".`
-        );
+        const saved = await updateWorkspaceSetting('agentMode', value);
+        if (saved) {
+          Logger.info(`Agent mode set in workspace settings to: ${value || '(none)'}`);
+          vscode.window.showInformationMessage(
+            `Copilot Resurrect: Workspace agent mode set to "${value || '(none)'}".`
+          );
+        }
       }
     }),
 
@@ -241,13 +276,13 @@ export function activate(context: vscode.ExtensionContext): void {
         } else if (picked.label.startsWith('Autopilot')) {
           mode = 'autopilot';
         }
-        await vscode.workspace
-          .getConfiguration(EXT_ID)
-          .update('approvalsMode', mode, vscode.ConfigurationTarget.Global);
-        Logger.info(`Approvals mode set to: ${mode}`);
-        vscode.window.showInformationMessage(
-          `Copilot Resurrect: Approvals mode set to "${picked.label}".`
-        );
+        const saved = await updateWorkspaceSetting('approvalsMode', mode);
+        if (saved) {
+          Logger.info(`Approvals mode set in workspace settings to: ${mode}`);
+          vscode.window.showInformationMessage(
+            `Copilot Resurrect: Workspace approvals mode set to "${picked.label}".`
+          );
+        }
       }
     }),
   );
@@ -305,6 +340,16 @@ function stopWatcher(): void {
 function updateStatusBar(): void {
   const cfg = getConfig();
   const count = _engine?.todayCount ?? 0;
+  const rateLimitState = _context ? loadRateLimitState(_context) : undefined;
+  const cooldownSeconds = rateLimitState?.cooldownUntil
+    ? Math.max(0, Math.ceil((new Date(rateLimitState.cooldownUntil).getTime() - Date.now()) / 1000))
+    : 0;
+
+  if (cfg.enabled && rateLimitState?.lastErrorCode && cooldownSeconds > 0) {
+    _statusBar?.setShadowCooldown(rateLimitState.lastErrorCode, cooldownSeconds);
+    return;
+  }
+
   _statusBar?.setEnabled(cfg.enabled, count, cfg.maxRestartsPerDay);
 }
 
@@ -330,6 +375,19 @@ async function handleError(error: DetectedError): Promise<void> {
 
   Logger.warn(`Error pattern detected: ${error.pattern} (type: ${error.type})`);
   Logger.warn(`  File: ${error.filePath}`);
+  if (error.details) {
+    Logger.warn(
+      `  Code: ${error.details.code || '(none)'} | ` +
+      `Severity: ${error.details.severity} | ` +
+      `Cooldown: ${error.details.cooldownSeconds}s`
+    );
+    if (error.details.message) {
+      Logger.warn(`  Message: ${error.details.message}`);
+    }
+  }
+  if (error.excerpt) {
+    Logger.debug(`  Excerpt: ${error.excerpt}`);
+  }
 
   if (_engine?.isResurrecting || _engine?.isCoolingDown) {
     Logger.debug('Resurrection or cooldown already in progress — ignoring error trigger.');
@@ -338,7 +396,7 @@ async function handleError(error: DetectedError): Promise<void> {
 
   _statusBar?.setResurrecting();
 
-  const success = await _engine!.resurrect(cfg, false, error.type);
+  const success = await _engine!.resurrect(cfg, false, error.type, error);
 
   if (success) {
     _watcher?.bumpActivity();
@@ -375,12 +433,52 @@ async function pickModelAndSave(setting: string, title: string): Promise<void> {
 
   if (picked) {
     const value = picked.label === '(none)' ? '' : picked.label;
-    await vscode.workspace
-      .getConfiguration(EXT_ID)
-      .update(setting, value, vscode.ConfigurationTarget.Global);
-    Logger.info(`${setting} set to: ${value || '(none)'}`);
+    const saved = await updateWorkspaceSetting(setting, value);
+    if (saved) {
+      Logger.info(`${setting} set in workspace settings to: ${value || '(none)'}`);
+      vscode.window.showInformationMessage(
+        `Copilot Resurrect: Workspace ${setting} set to "${value || '(none)'}".`
+      );
+    }
+  }
+}
+
+async function pickFallbackModelChainAndSave(): Promise<void> {
+  const cfg = getConfig();
+  const models = await getAvailableModels();
+  if (models.length === 0) {
+    vscode.window.showWarningMessage(
+      'No Copilot language models found. Ensure GitHub Copilot is installed and authenticated.'
+    );
+    return;
+  }
+
+  const currentChain = new Set(getEffectiveFallbackModelChain(cfg).map(m => m.toLowerCase()));
+  const items = models.map(m => ({
+    label: m.name || m.id,
+    description: `Family: ${m.family} | Max tokens: ${m.maxInputTokens}`,
+    detail: `ID: ${m.id}`,
+    picked: currentChain.has((m.name || m.id).toLowerCase()),
+  }));
+
+  const picked = await vscode.window.showQuickPick(items, {
+    canPickMany: true,
+    placeHolder: 'Select fallback models in priority order (top-to-bottom selection order will be preserved)',
+    title: 'Copilot Resurrect: Fallback Model Chain',
+    matchOnDescription: true,
+    matchOnDetail: true,
+  });
+
+  if (!picked) {
+    return;
+  }
+
+  const chain = picked.map(item => item.label);
+  const saved = await updateWorkspaceSetting('fallbackModelChain', chain);
+  if (saved) {
+    Logger.info(`fallbackModelChain set in workspace settings to: ${chain.length ? chain.join(' -> ') : '(none)'}`);
     vscode.window.showInformationMessage(
-      `Copilot Resurrect: ${setting} set to "${value || '(none)'}".`
+      `Copilot Resurrect: Workspace fallback model chain saved (${chain.length} model${chain.length === 1 ? '' : 's'}).`
     );
   }
 }
